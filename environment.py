@@ -44,7 +44,12 @@ class MahjongGame:
     def check_win(self, player):
         # Check if the player's hand is a winning hand
         # Implement winning logic here
-        pass
+        hand = self.players[player]
+        if is_winning_hand(hand):
+            print(f"Player {player} wins!")
+            return True
+        return False
+        
 
     def play_turn(self):
         # Simulate a player's turn
@@ -63,7 +68,7 @@ def is_straight(tiles):
     suits = {tile.suit for tile in tiles}
     if len(suits) != 1:  # All tiles must be of the same suit
         return False
-    if tiles[0] == 'honors':
+    if any(tile.suit == "honors" for tile in tiles):
         return False
     values = sorted([tile.value for tile in tiles])
     return values[0] + 1 == values[1] and values[1] + 1 == values[2]
@@ -131,6 +136,29 @@ def is_winning_hand(hand):
         # Find melds in the remaining hand
         melds = find_melds(remaining_hand)
         if len(melds) >= 4:
+            return True
+
+    return False
+
+
+def is_reach_possible(hand):
+    """
+    Check if the hand is in a state where a player can declare a reach.
+    (i.e., the hand is 13 tiles and 1 tile away from being a winning hand)
+    """
+    if len(hand) != 14: 
+        return False
+    counts = defaultdict(int)
+    for tile in hand:
+        counts[(tile.suit, tile.value)] += 1
+    pairs = [key for key, count in counts.items() if count >= 2]
+    for pair_key in pairs:
+        remaining_hand = hand.copy()
+        pair_tiles = [tile for tile in remaining_hand if tile.suit == pair_key[0] and tile.value == pair_key[1]][:2]
+        for tile in pair_tiles:
+            remaining_hand.remove(tile)
+        melds = find_melds(remaining_hand)
+        if len(melds) == 4:
             return True
 
     return False
