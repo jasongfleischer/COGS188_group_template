@@ -1,5 +1,8 @@
 # COGS188 Project template
-TODO: Add basic description of repo and how to run
+TODO: Add basic description of repo and how to run.
+
+
+
 Fork this repo.
 
 Once you do it is is your repo. You are free to manage the repo as you see fit, edit this README, add data files, add scripts, etc. 
