@@ -65,7 +65,7 @@ based on heuristics.
   Iterates over each possible rotation and horizontal position for the given piece and determines if dropping it at that position 
   results in a valid placement (i.e., no collision). Returns all such legal placements.
 
-Note: we might be able to use the `intersects` function in Tetris for this
+ Note: we might be able to use the `intersects` function in Tetris for this
 ---
 
 ### 2.2. Function: `simulate_placement`
@@ -96,7 +96,7 @@ Note: we might be able to use the `intersects` function in Tetris for this
   - Total number of cleared lines (or derived score)
   - Overall board height
 
-Note: Feel free to add anything more but I'd focus on the basic things first then once we get it working we can add more. 
+ Note: Feel free to add anything more but I'd focus on the basic things first then once we get it working we can add more. 
 ---
 
 ### 2.4. Function: `backtracking_search`
