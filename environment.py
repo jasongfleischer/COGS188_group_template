@@ -20,7 +20,7 @@ class MahjongGame:
     def _create_wall(self):
         # Create and shuffle a standard set of 144 tiles
         suits = ["mans", "pins", "sticks", "honors"]
-        tiles = [Tile(suit, value) for suit in suits for value in range(1, 10)] * 4 #includes flowers
+        tiles = [Tile(suit, value) for suit in suits for value in range(1, 10)] * 4 #includes flowers vincent will fix it
         random.shuffle(tiles)
         return tiles
 
@@ -41,21 +41,17 @@ class MahjongGame:
         self.players[player].remove(tile)
         self.discards[player].append(tile)
 
-    def check_win(self, player):
-        # Check if the player's hand is a winning hand
-        # Implement winning logic here
-        pass
-
     def play_turn(self):
         # Simulate a player's turn
         tile = self.draw_tile(self.current_player)
         print(f"Player {self.current_player} draws {tile}")
         # Implement discard logic here
+        ##need to figure out which tile to discard, Ryota will do this
         self.current_player = (self.current_player + 1) % self.num_players
 
 def is_straight(tiles):
     """
-    Check if the given tiles form a valid straight (chow).
+    Check if the given tiles form a valid straight (chi).
     Tiles must be of the same suit and consecutive in value.
     """
     if len(tiles) != 3:
@@ -63,7 +59,7 @@ def is_straight(tiles):
     suits = {tile.suit for tile in tiles}
     if len(suits) != 1:  # All tiles must be of the same suit
         return False
-    if tiles[0] == 'honors':
+    if tiles[0].suit == 'honors':
         return False
     values = sorted([tile.value for tile in tiles])
     return values[0] + 1 == values[1] and values[1] + 1 == values[2]
@@ -129,11 +125,14 @@ def is_winning_hand(hand):
             remaining_hand.remove(tile)
 
         # Find melds in the remaining hand
-        melds = find_melds(remaining_hand)
+        melds = find_melds(remaining_hand) #remove straights/pongs and determines if winning hand exists
         if len(melds) >= 4:
             return True
-
     return False
+
+def hu_ron(hand):
+    #figure out if there are any winning tiles, return empty arraylist if cannot win, return arraylist of winning tiles if exists
+    pass
 # Example usage
 game = MahjongGame()
 game.deal_tiles()
