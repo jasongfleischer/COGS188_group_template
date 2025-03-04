@@ -1,5 +1,6 @@
 import random
 from collections import defaultdict
+from itertools import combinations
 
 class Tile:
     def __init__(self, suit, value):
@@ -41,6 +42,16 @@ class MahjongGame:
         self.players[player].remove(tile)
         self.discards[player].append(tile)
 
+    def check_win(self, player):
+        # Check if the player's hand is a winning hand
+        # Implement winning logic here
+        hand = self.players[player]
+        if is_winning_hand(hand):
+            print(f"Player {player} wins!")
+            return True
+        return False
+        
+
     def play_turn(self):
         # Simulate a player's turn
         tile = self.draw_tile(self.current_player)
@@ -59,7 +70,7 @@ def is_straight(tiles):
     suits = {tile.suit for tile in tiles}
     if len(suits) != 1:  # All tiles must be of the same suit
         return False
-    if tiles[0].suit == 'honors':
+    if any(tile.suit == "honors" for tile in tiles):
         return False
     values = sorted([tile.value for tile in tiles])
     return values[0] + 1 == values[1] and values[1] + 1 == values[2]
@@ -128,11 +139,67 @@ def is_winning_hand(hand):
         melds = find_melds(remaining_hand) #remove straights/pongs and determines if winning hand exists
         if len(melds) >= 4:
             return True
+
     return False
 
+
+def is_reach_possible(hand):
+    """
+    Check if the hand is in a state where a player can declare a reach.
+    (i.e., the hand is 13 tiles and 1 tile away from being a winning hand)
+    """
+    if len(hand) != 14: 
+        return False
+    counts = defaultdict(int)
+    for tile in hand:
+        counts[(tile.suit, tile.value)] += 1
+    pairs = [key for key, count in counts.items() if count >= 2]
+    for pair_key in pairs:
+        remaining_hand = hand.copy()
+        pair_tiles = [tile for tile in remaining_hand if tile.suit == pair_key[0] and tile.value == pair_key[1]][:2]
+        for tile in pair_tiles:
+            remaining_hand.remove(tile)
+        melds = find_melds(remaining_hand)
+        if len(melds) == 4:
+            return True
+
+    return False
+
+def is_valid_melds(melds):
+    used_tiles = set()
+    for meld in melds:
+        for tile in meld:
+            if tile in used_tiles:
+                return False
+            used_tiles.add(tile)
+    return True
+
+#if there are any winning tiles, return hand with melds, otherwise return empty arraylist if cannot win
 def hu_ron(hand):
-    #figure out if there are any winning tiles, return empty arraylist if cannot win, return arraylist of winning tiles if exists
-    pass
+
+    if len(hand) != 14:
+        return None
+    
+    counts = defaultdict(int)
+    for tile in hand:
+        counts[(tile.suit, tile.value)].append(tile)
+
+    # Try each pair and see if the remaining tiles can form 4 melds
+    for pair_key, pair_tiles in counts.items():
+        if len(pair_tiles) >= 2:
+            remaining_hand = hand.copy()
+            # Remove the pair from the hand
+            pair = pair_tiles[:2]
+            for tile in pair:
+                remaining_hand.remove(tile)
+            all_melds = find_melds(remaining_hand)
+
+            # Find melds in the remaining hand
+            for meld_comb in combinations(all_melds, 4):
+                if is_valid_melds(meld_comb): #remove straights/pongs and determines if winning hand exists
+                    winning_hand = {"pair": pair_tiles, "melds": list(meld_comb)}
+                    return winning_hand
+    return None
 # Example usage
 game = MahjongGame()
 game.deal_tiles()
