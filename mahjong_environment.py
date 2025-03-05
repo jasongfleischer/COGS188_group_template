@@ -1,3 +1,5 @@
+# The base code was constructed with the help of DeepSeek AI (Tile class, MahjongGame class, and most of the methods as a starter code
+# and then modified from there)
 import random
 from collections import defaultdict
 
