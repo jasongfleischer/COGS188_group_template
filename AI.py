@@ -9,15 +9,25 @@ def get_legal_placements(tetris: Tetris, piece: Figure) -> List[Tuple[int, int]]
     legal = []
     original_figure = tetris.figure
     num_rotations = len(piece.figures[piece.type])
+
     for rotation in range(num_rotations):
-        for x in range(tetris.width):
-            temp_figure = Figure(x, 0)
-            temp_figure.type = piece.type
-            temp_figure.rotation = rotation
-            temp_figure.color = piece.color
+        temp_figure = Figure(0, 0)
+        temp_figure.type = piece.type
+        temp_figure.rotation = rotation
+        temp_figure.color = piece.color
+
+        min_x = min([j for i in range(4) for j in range(4) if i*4 + j in temp_figure.image()])
+        max_x = max([j for i in range(4) for j in range(4) if i*4 + j in temp_figure.image()])
+
+        min_allowed_x = -min_x
+        max_allowed_x = tetris.width - max_x - 1
+
+        for x in range(min_allowed_x, max_allowed_x + 1):
+            temp_figure.x = x
             tetris.figure = temp_figure
             if not tetris.intersects():
                 legal.append((rotation, x))
+
     tetris.figure = original_figure
     return legal
 
@@ -122,7 +132,7 @@ def get_next_moves(tetris: Tetris, pieces: List[Figure]) -> List[Tuple[int, int]
     """
     # return [(0, 3)] * 10 # dummy data
     #generate our next 10 moves using backtracking
-    depth = min(10, len(pieces))
+    depth = min(5, len(pieces))
     moves, _ = backtracking_search(tetris, pieces, depth)
     #this will return to tetris.py
     return moves

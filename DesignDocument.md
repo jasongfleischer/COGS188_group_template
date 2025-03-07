@@ -165,3 +165,5 @@ based on heuristics.
 5. **Loop:**  
    - The AI is repeatedly invoked as long as the game is active, continually processing the next set of 10 pieces until the game is over.
    - We can maybe have the user hit space to proceed onto the next AI generated moves or just exit
+
+TODO: Run 100 simulations and store their scores in a csv. Get stats like average, median, range, etc. Look into alpha beta pruning
