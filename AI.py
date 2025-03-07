@@ -54,6 +54,7 @@ def get_next_moves(tetris: Tetris, pieces: List[Figure]) -> List[Tuple[int, int]
     """
     TODO: Pierce - fill this out
     """
+    return [(0, 3)] * 10 # dummy data
     #generate our next 10 moves using backtracking
     depth = min(10, len(pieces))
     moves, _ = backtracking_search(tetris, pieces, depth)
