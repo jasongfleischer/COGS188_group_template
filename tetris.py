@@ -70,7 +70,7 @@ class Tetris:
             self.field.append(new_line)
 
         # Fields for AI
-        self.n = 10
+        self.n = 3
         self.generate_next_figures()
         self.next_figures_index = 0
 
@@ -107,6 +107,8 @@ class Tetris:
                     for j in range(self.width):
                         self.field[i1][j] = self.field[i1 - 1][j]
         self.score += lines ** 2
+        if lines > 0:
+            print("Score: ", self.score)
 
     def go_space(self):
         while not self.intersects():
@@ -153,6 +155,7 @@ class Tetris:
         if self.intersects():
             # If it intersects after a placement, then it's game over
             self.state = "gameover"
+            self.freeze()
             return False
 
         # Make figure go down until it intersects and freeze, then a new figure will be the main figure
