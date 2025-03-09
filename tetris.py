@@ -108,7 +108,8 @@ class Tetris:
                         self.field[i1][j] = self.field[i1 - 1][j]
         self.score += lines ** 2
         if lines > 0:
-            print("Score: ", self.score)
+            #print("Score: ", self.score)
+            pass
 
     def go_space(self):
         while not self.intersects():
