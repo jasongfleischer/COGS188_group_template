@@ -126,13 +126,46 @@ def backtracking_search(tetris: Tetris, pieces: List[Figure], depth: int) -> Tup
     
     return best_sequence, best_score
 
+def backtracking_search_ab(tetris: Tetris, pieces: List[Figure], depth: int, alpha: float = float('-inf'), beta: float = float('inf')) -> Tuple[List[Tuple[int, int]], float]:
+    """
+    Backtracking search with alpha-beta pruning
+    """
+    if depth == 0 or not pieces:
+        return [], evaluate_state(tetris)
+    
+    best_sequence: List[Tuple[int, int]] = []
+    best_score = float('-inf')
+    
+    current_piece = pieces[0]
+    legal_moves = get_legal_placements(tetris, current_piece)
+    
+    ordered_moves = []
+    for move in legal_moves:
+        rotation, x = move
+        simulated_state = simulate_placement(tetris, current_piece, rotation, x)
+        heuristic = evaluate_state(simulated_state)
+        ordered_moves.append((move, simulated_state, heuristic))
+    #sort moves so that the ones w/ the highest score are explored first
+    ordered_moves.sort(key=lambda tup: tup[2], reverse=True)
+    
+    for move, sim_state, _ in ordered_moves:
+        subsequent_moves, score = backtracking_search_ab(sim_state, pieces[1:], depth - 1, alpha, beta)
+        if score > best_score:
+            best_score = score
+            best_sequence = [move] + subsequent_moves
+        alpha = max(alpha, best_score)
+        if beta <= alpha:
+            break  # beta cutoff
+    
+    return best_sequence, best_score
+
 def get_next_moves(tetris: Tetris, pieces: List[Figure]) -> List[Tuple[int, int]]:
     """
     TODO: Pierce - fill this out
     """
     # return [(0, 3)] * 10 # dummy data
     #generate our next 10 moves using backtracking
-    depth = min(5, len(pieces))
-    moves, _ = backtracking_search(tetris, pieces, depth)
+    depth = min(3, len(pieces)) #Note: depth must be the same as self.n in tetris.py otherwise it will crash
+    moves, _ = backtracking_search_ab(tetris, pieces, depth)
     #this will return to tetris.py
     return moves
