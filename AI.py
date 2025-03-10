@@ -100,7 +100,7 @@ def evaluate_state(tetris: Tetris) -> float:
 
 def backtracking_search(tetris: Tetris, pieces: List[Figure], depth: int) -> Tuple[List[Tuple[int, int]], float]:
     """
-    TODO: Pierce - fill this out
+    Check design doc for details
     """
     #if depth is 0 or no pieces are left, return the current board status
     if depth == 0 or not pieces:
@@ -128,7 +128,7 @@ def backtracking_search(tetris: Tetris, pieces: List[Figure], depth: int) -> Tup
 
 def backtracking_search_ab(tetris: Tetris, pieces: List[Figure], depth: int, alpha: float = float('-inf'), beta: float = float('inf')) -> Tuple[List[Tuple[int, int]], float]:
     """
-    Backtracking search with alpha-beta pruning
+    Backtracking search with basic alpha beta pruning
     """
     if depth == 0 or not pieces:
         return [], evaluate_state(tetris)
@@ -161,7 +161,7 @@ def backtracking_search_ab(tetris: Tetris, pieces: List[Figure], depth: int, alp
 
 def get_next_moves(tetris: Tetris, pieces: List[Figure]) -> List[Tuple[int, int]]:
     """
-    TODO: Pierce - fill this out
+    Check design doc for details
     """
     # return [(0, 3)] * 10 # dummy data
     #generate our next 10 moves using backtracking

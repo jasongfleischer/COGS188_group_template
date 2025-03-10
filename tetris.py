@@ -70,7 +70,7 @@ class Tetris:
             self.field.append(new_line)
 
         # Fields for AI
-        self.n = 3
+        self.n = 3 #Note: this must be the same as depth or else tetris will crash
         self.generate_next_figures()
         self.next_figures_index = 0
 
