@@ -3,10 +3,10 @@ import pandas as pd
 
 # Load all datasets
 datasets = {
-    'AB': pd.read_csv("tetris_scores-AB.csv")["Max Score"],
-    'noAB': pd.read_csv("tetris_scores-noAB.csv")["Max Score"],
     'Score': pd.read_csv("tetris_scores-Score.csv")["Max Score"],
-    'Score+Height': pd.read_csv("tetris_scores-Score+Height.csv")["Max Score"]
+    'Score + Height': pd.read_csv("tetris_scores-Score+Height.csv")["Max Score"],
+    'Full Heuristics': pd.read_csv("tetris_scores-noAB.csv")["Max Score"],
+    'Full Heuristics + AB Pruning': pd.read_csv("tetris_scores-AB.csv")["Max Score"]
 }
 
 # Create figure and axis

@@ -11,7 +11,7 @@ plt.axhline(y=df["Max Score"].mean(), color='r', linestyle='--', label=f'Average
 # Labels and Title
 plt.xlabel("Game Number")
 plt.ylabel("Max Score")
-plt.title("Tetris AI Bot Performance Over 100 Games")
+plt.title("Tetris noAB Performance Over 100 Games")
 plt.legend()
 plt.grid(True)
 
