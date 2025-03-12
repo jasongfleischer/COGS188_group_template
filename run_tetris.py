@@ -94,24 +94,25 @@ while not done:
             valid_rotations = list(range(len(Figure.figures[game.figure.type])))
             # print(q_values)
 
-            # Limit the q_values to only valid rotations
-            # q_values[[i for i in range(tetris_wrapper.action_space_n) if tetris_wrapper.action_space[i][0] not in valid_rotations]] = -float('inf')
+            # Limit the q_values to only valid rotations and x placements
+            # We don't want to allow game over as much as possible
             for i in range(tetris_wrapper.action_space_n):
-                if tetris_wrapper.action_space[i][0] not in valid_rotations:
+                rotation = tetris_wrapper.action_space[i][0]
+                if rotation not in valid_rotations:
                     q_values[i] = -float('inf')
                 else:
                     # Check valid x bounds
+                    old_rotation = game.figure.rotation
+                    game.figure.rotation = rotation
                     min_x = min([j for i in range(4) for j in range(4) if i*4 + j in game.figure.image()])
                     max_x = max([j for i in range(4) for j in range(4) if i*4 + j in game.figure.image()])
                     min_allowed_x = -min_x
-                    max_allowed_x = game.width - max_x - 2
-                    # print("min_allowed_x: ",min_allowed_x)
-                    # print("max_allowed_x: ",max_allowed_x)
+                    max_allowed_x = game.width - max_x - 1
                     if tetris_wrapper.action_space[i][1] < min_allowed_x or tetris_wrapper.action_space[i][1] > max_allowed_x:
                         q_values[i] = -float('inf')
+                    game.figure.rotation = old_rotation
             action = q_values.max(0).indices.view(1, 1)
             action = tetris_wrapper.action_space[action.item()]
-            # print("action: ",action[1])
 
             if not game.apply_placement(action[0], action[1]):
                 # Placement failed, game over

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 @dataclass
 class HyperParams:
     BATCH_SIZE: int = 512
-    GAMMA: float = 0.95
+    GAMMA: float = 0.97
     EPS_START: float = 0.9
     EPS_END: float = 0.05
     EPS_DECAY: int = 1000
@@ -66,7 +66,8 @@ class TetrisWrapper:
         return np.concatenate([state, current_figure.flatten()])
 
     def dqn_evaluate_state(self, tetris:Tetris) -> float:
-        return tetris.score*100
+        reward = evaluate_state(tetris)
+        return reward - (8000 if tetris.state == "gameover" else 0)
 
     def step(self, action: int):
         """
@@ -78,6 +79,7 @@ class TetrisWrapper:
 
         self.tetris = simulate_placement(self.tetris, self.tetris.figure, rotation, x)
         reward = self.dqn_evaluate_state(self.tetris)
+        # reward = evaluate_state(self.tetris)
 
         # Check if game is over
         done = self.tetris.state == "gameover"
@@ -203,27 +205,26 @@ class DQNTrainer:
                 # Get Q-values for all actions
                 q_values = self.policy_net(state_tensor)
                 
-                # Mask invalid rotations by setting their Q-values very low
-                # print("q_values for the current state: ", q_values)
-                # print(q_values[:])
-                # print(q_values[:,[r for r in range(self.env.action_space_n) if r not in valid_rotations]])
+                # Mask invalid rotations and x placements by setting their Q-values very low
                 for i in range(self.env.action_space_n):
-                    if self.env.action_space[i][0] not in valid_rotations:
+                    rotation = self.env.action_space[i][0]
+                    if rotation not in valid_rotations:
                         q_values[:,i] = -float('inf')
                     else:
                         # Check valid x bounds
+                        old_rotation = tetris.figure.rotation
+                        tetris.figure.rotation = rotation
                         min_x = min([j for i in range(4) for j in range(4) if i*4 + j in tetris.figure.image()])
                         max_x = max([j for i in range(4) for j in range(4) if i*4 + j in tetris.figure.image()])
 
                         min_allowed_x = -min_x
-                        max_allowed_x = tetris.width - max_x - 2
+                        max_allowed_x = tetris.width - max_x - 1
                         if self.env.action_space[i][1] < min_allowed_x or self.env.action_space[i][1] > max_allowed_x:
                             q_values[:,i] = -float('inf')
+                        tetris.figure.rotation = old_rotation
 
                 # Choose best action from valid options
                 return q_values.max(1).indices.view(1, 1)
-
-                # return self.policy_net(state_tensor).max(1).indices.view(1, 1) # provided
         else:
             # Choose random action
             action_taken = random.choice([(r,x) for r,x in self.env.action_space if r in valid_rotations]) # chose from valid actions
@@ -364,13 +365,13 @@ if __name__ == "__main__":
     env = TetrisWrapper()
 
     # Initialize replay memory
-    memory = ReplayMemory(10000)
+    memory = ReplayMemory(15000)
 
     # Initialize hyperparameters
     params = HyperParams()
 
     # Initialize DQNTrainer
-    trainer = DQNTrainer(env, memory, device, params, max_steps_per_episode=500, num_episodes=1500)
+    trainer = DQNTrainer(env, memory, device, params, max_steps_per_episode=1500, num_episodes=2000)
 
     # Train the agent
     trainer.train()
