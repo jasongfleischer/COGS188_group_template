@@ -217,11 +217,11 @@ game.deal_tiles()
 test_hand = [
     Tile("dot", 1), Tile("dot", 1),  # Pair
 
-    Tile("bamboo", 2), Tile("bamboo", 7), Tile("bamboo", 4),  # Sequence
-    Tile("character", 3), Tile("character", 4), Tile("character", 5),  # Sequence
+    Tile("bamboo", 1), Tile("bamboo", 2), Tile("bamboo", 3),  # Sequence
+    Tile("bamboo", 4), Tile("bamboo", 5), Tile("bamboo", 6),  # Sequence
 
-    Tile("dot", 6), Tile("dot", 6), Tile("dot", 6),  # Triplet
-    Tile("bamboo", 7), Tile("bamboo", 8), Tile("bamboo", 9)  # Sequence
+    Tile("bamboo", 7), Tile("bamboo", 8), Tile("bamboo", 9),  # Sequence
+    Tile("bamboo", 9), Tile("bamboo", 9), Tile("bamboo", 9)  # Triplet
 ]
 
 # print(can_form_meld(test_hand))
