@@ -134,6 +134,7 @@ def is_winning_hand(hand):
         counts[(tile.suit, tile.value)] += 1
     print(counts)
     test_hand = hand
+    #Loop through all possible pair; check if winning hand
     for (suit, value), num_times in counts.items():
         test_hand = hand.copy()
         if num_times >= 2:
@@ -147,23 +148,7 @@ def is_winning_hand(hand):
             counts[(suit, value)] += 2
     return False
 
-            
-    # pairs = [key for key, count in counts.items() if count >= 2]
-
-    # # Try each pair and see if the remaining tiles can form 4 melds
-    # for pair_key in pairs:
-    #     remaining_hand = hand.copy()
-    #     # Remove the pair from the hand
-    #     pair_tiles = [tile for tile in remaining_hand if tile.suit == pair_key[0] and tile.value == pair_key[1]][:2]
-    #     for tile in pair_tiles:
-    #         remaining_hand.remove(tile)
-
-    #     # Find melds in the remaining hand
-    #     if can_form_meld(hand):
-    #         return True
-
-    return False
-
+#Check if you can form 4 melds
 def can_form_meld(hand):
     #Check straights
     if(len(hand) == 0):
