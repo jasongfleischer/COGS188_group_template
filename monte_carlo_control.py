@@ -31,7 +31,7 @@ class OnePlayerMahjongGame:
         tiles = [Tile(suit, value) for suit in suits for value in range(1, 10)] * 4 #includes flowers
         honors  = ["red dragon", "green dragon", "white dragon"]
         for i in range(4):
-            tiles.extend([Tile(suit, None) for suit in honors])
+            tiles.extend([Tile(suit, 0) for suit in honors])
         random.shuffle(tiles)
         return tiles
 
@@ -40,7 +40,7 @@ class OnePlayerMahjongGame:
         for _ in range(13):
             self.player.append(self.wall.pop())
 
-    def draw_tile(self, player):
+    def draw_tile(self):
         # Player draws a tile from the wall
         tile = self.wall.pop()
         self.player.append(tile)
@@ -52,7 +52,9 @@ class OnePlayerMahjongGame:
         self.discards.append(tile)
         return tile 
 
-    def take_turn(self, player, tile):
+    def take_turn(self, tile):
+        reward = 0
+        self.player.append(tile)
         current_hand = self.player
         all_melds = find_melds(current_hand)
         for meld in all_melds:
@@ -91,7 +93,7 @@ class OnePlayerMahjongGame:
         self.deal_tiles()
         return self.player
     
-    def is_winning_hand(self):
+    def is_winning_hand(self, hand):
         """
         Check if the hand is a winning hand (4 melds and 1 pair).
         """

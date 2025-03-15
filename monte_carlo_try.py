@@ -10,10 +10,10 @@ class MonteCarlo:
         self.epsilon = epsilon
         self.Q0 = Q0
         self.max_episode_size = max_episode_size
-        self.Q = defaultdict(lambda: np.full(env.unique_tiles, 0))
-        self.C = defaultdict(lambda: np.zeros(env.n_actions))
-        self.greedy_policy = defaultdict(lambda: np.full(env.unique_tiles, 1 / env.unique_tiles))
-        self.egreedy_policy = defaultdict(lambda: np.full(env.unique_tiles, 1 / env.unique_tiles))
+        self.Q = defaultdict(int)
+        self.C = defaultdict(int)
+        self.greedy_policy = defaultdict(int)
+        self.egreedy_policy = defaultdict(int)
 
     def create_target_policy(self):
         """
@@ -90,7 +90,6 @@ class MonteCarlo:
             best_value = -np.inf
             for tile in self.env.player:
                 value = self.Q[(tile.suit, tile.value)]
-                print(value)
                 if value > best_value:
                     best_value = value
                     best_action = tile
@@ -119,7 +118,8 @@ class MonteCarlo:
         """
         #Initialize variables 
         state = self.env.reset()
-        print(state)
+        self.wall = self.env._create_wall()
+        self.env.draw_tile()
         counter = 0
         path = []
         #Begin going through episode
@@ -127,10 +127,11 @@ class MonteCarlo:
             action = self.egreedy_selection(state)
             state, action, reward = self.env.take_turn(action)
             path.append((state, action, reward))
+            if self.env.is_winning_hand(state):
+                break
             state = self.env.player
             counter += 1
-            if self.env.is_winning_hand():
-                break
+            self.env.draw_tile()
 
         return path
 
