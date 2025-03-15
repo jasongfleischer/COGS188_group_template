@@ -34,6 +34,7 @@ class Tile:
     
 
 class MahjongGame:
+    agent = None
     def __init__(self, num_players=4, device=None, silent=False):
         self.num_players = num_players
         self.players = [[] for _ in range(num_players)]
@@ -154,6 +155,9 @@ class MahjongGame:
             matrix[tile.num, i] = 1 if change == 'draw' else 3
         return matrix
     
+    def add_agent(self, agent):
+        self.agent = agent
+
     def check_win(self, player):
         # Check if the player's hand is a winning hand
         # Implement winning logic here
@@ -165,6 +169,9 @@ class MahjongGame:
         return False
 
     def play_turn(self, use_matrix=False):
+        if self.agent != None:
+            agent = self.agent
+
         tile = self.draw_tile(self.current_player)
         self.update_game_matrix(self.current_player, tile, 'draw')
         if not self.silent:
@@ -193,6 +200,9 @@ class MahjongGame:
         """
         Check if the player can form a Pong (3 identical tiles) using a discarded tile.
         """
+        if self.agent != None:
+            agent = self.agent
+
         # Count how many of the discarded tile exist in the player's hand
         for player in ((current_player + 1) % num_players, (current_player + 2) % num_players, (current_player + 3) % num_players):
             if use_matrix:
@@ -220,6 +230,9 @@ class MahjongGame:
         return False, discarded_tile, current_player
     
     def decide_tile_to_discard(self, agent, player):
+        if self.agent != None:
+            agent = self.agent
+            
         assert decision_type in ('heuristic', 'matrix')
         best_tile = None
         best_value = -float("inf")
