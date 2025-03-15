@@ -1,6 +1,5 @@
 from tetris import *
 from AI import *
-from DQN import *
 import argparse
 import pygame
 import torch
@@ -66,60 +65,18 @@ pressing_down = False
 # Argument parsing
 parser = argparse.ArgumentParser(description='Tetris Solver')
 parser.add_argument('-backtracking', action='store_true', help='Enable backtracking')
-parser.add_argument('-dqn', action='store_true', help='Enable DQN')
 args = parser.parse_args()
 print("backtracking: ",args.backtracking)
-print("dqn: ",args.dqn)
 
 if game.figure is None:
     game.new_figure()
-
-# Initialize dqn states
-tetris_wrapper = TetrisWrapper()
-dqn_model = DQN(tetris_wrapper.state_space_n, tetris_wrapper.action_space_n)
-dqn_model.load_state_dict(torch.load("tetris_dqn_model.pth"))
-dqn_model.eval()
-dqn_state = TetrisWrapper._flatten_state(game)
 
 while not done:
     # Check if exit game
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             done = True
-    if args.dqn: # Using DQN
-        if not game.state == "gameover":
-            with torch.no_grad():
-                q_values = dqn_model(torch.from_numpy(dqn_state).float())
-
-            valid_rotations = list(range(len(Figure.figures[game.figure.type])))
-            # print(q_values)
-
-            # Limit the q_values to only valid rotations and x placements
-            # We don't want to allow game over as much as possible
-            for i in range(tetris_wrapper.action_space_n):
-                rotation = tetris_wrapper.action_space[i][0]
-                if rotation not in valid_rotations:
-                    q_values[i] = -float('inf')
-                else:
-                    # Check valid x bounds
-                    old_rotation = game.figure.rotation
-                    game.figure.rotation = rotation
-                    min_x = min([j for i in range(4) for j in range(4) if i*4 + j in game.figure.image()])
-                    max_x = max([j for i in range(4) for j in range(4) if i*4 + j in game.figure.image()])
-                    min_allowed_x = -min_x
-                    max_allowed_x = game.width - max_x - 1
-                    if tetris_wrapper.action_space[i][1] < min_allowed_x or tetris_wrapper.action_space[i][1] > max_allowed_x:
-                        q_values[i] = -float('inf')
-                    game.figure.rotation = old_rotation
-            action = q_values.max(0).indices.view(1, 1)
-            action = tetris_wrapper.action_space[action.item()]
-
-            if not game.apply_placement(action[0], action[1]):
-                # Placement failed, game over
-                break
-            draw_entire_game(game)
-            time.sleep(1)
-    elif args.backtracking: # Using backtracking
+    if args.backtracking: # Using backtracking
         if not game.state == "gameover":
             # Set figure as first figure
             game.figure = game.next_n_figures[0]
