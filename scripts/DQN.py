@@ -18,13 +18,13 @@ from dataclasses import dataclass
 
 @dataclass
 class HyperParams:
-    BATCH_SIZE: int = 512
+    BATCH_SIZE: int = 2048
     GAMMA: float = 0.97
-    EPS_START: float = 0.9
+    EPS_START: float = 0.7
     EPS_END: float = 0.05
     EPS_DECAY: int = 1000
     TAU: float = 0.005
-    LR: float = 1e-3
+    LR: float = 1e-4
 
 Transition = namedtuple("Transition", ("state", "action", "next_state", "reward"))
 
@@ -56,18 +56,60 @@ class TetrisWrapper:
         self.tetris = Tetris(height=20, width=10)
         self.tetris.new_figure()
         return TetrisWrapper._flatten_state(self.tetris), {}
+    
+    @staticmethod
+    def compute_board_features(tetris: Tetris) -> np.array:
+        """
+        Compute additional board features:
+         - aggregate height: Sum of column heights.
+         - holes: Total holes (empty cells below the first block) per column.
+         - bumpiness: Sum of differences in adjacent column heights.
+        """
+        aggregate_height = 0
+        holes = 0
+        bumpiness = 0
+        heights = []
+
+        for col in range(tetris.width):
+            col_height = 0
+            for row in range(tetris.height):
+                if tetris.field[row][col] != 0:
+                    col_height = tetris.height - row
+                    break
+            heights.append(col_height)
+            aggregate_height += col_height
+
+            # Count holes in this column
+            block_found = False
+            col_holes = 0
+            for row in range(tetris.height):
+                if tetris.field[row][col] != 0:
+                    block_found = True
+                elif block_found:
+                    col_holes += 1
+            holes += col_holes
+
+        for i in range(1, len(heights)):
+            bumpiness += abs(heights[i] - heights[i-1])
+
+        return np.array([aggregate_height, holes, bumpiness], dtype=np.float32)
 
     def _flatten_state(tetris:Tetris) -> np.array:
         '''Encode state as field and current figure'''
-        state = np.array(tetris.field).astype(np.float32).flatten()
-        # TODO: use more than one figure to encode state
-        current_figure = np.zeros(TetrisWrapper.figure_types)
-        current_figure[tetris.figure.type] = 1
-        return np.concatenate([state, current_figure.flatten()])
+        board_flat = np.array(tetris.field, dtype=np.float32).flatten()
+        current_figure = np.zeros(TetrisWrapper.figure_types, dtype=np.float32)
+        current_figure[tetris.figure.type] = 1.0
+        board_features = TetrisWrapper.compute_board_features(tetris)
+        return np.concatenate([board_flat, current_figure, board_features])
 
     def dqn_evaluate_state(self, tetris:Tetris) -> float:
-        reward = evaluate_state(tetris)
-        return reward - (8000 if tetris.state == "gameover" else 0)
+        base_reward = evaluate_state(tetris)
+        if tetris.state == "gameover":
+            # If the game is over, apply a heavy penalty.
+            return base_reward - 800
+        else:
+            # Otherwise, add a bonus reward for successfully placing the piece.
+            return base_reward + 10
 
     def step(self, action: int):
         """
@@ -193,49 +235,36 @@ class DQNTrainer:
         sample = random.random()
         eps_threshold = self.params.EPS_END + (self.params.EPS_START - self.params.EPS_END) * \
                         math.exp(-1. * self.steps_done / self.params.EPS_DECAY)
-        # Update steps
         self.steps_done += 1
 
         tetris = self.env.tetris
+
+        # Get legal moves using the AI function and filter them to be in the canonical action space.
+        from AI import get_legal_placements
+        legal_moves = get_legal_placements(tetris, tetris.figure)
+        legal_moves = [move for move in legal_moves if move in self.env.action_space]
+
+        # Fallback: compute valid rotations as before.
         valid_rotations = list(range(len(Figure.figures[tetris.figure.type])))
 
-        # Exploit or explore
         if sample > eps_threshold:
             with torch.no_grad():
-                # Get Q-values for all actions
                 q_values = self.policy_net(state_tensor)
-                
-                # Mask invalid rotations and x placements by setting their Q-values very low
-                for i in range(self.env.action_space_n):
-                    rotation = self.env.action_space[i][0]
-                    if rotation not in valid_rotations:
-                        q_values[:,i] = -float('inf')
-                    else:
-                        # Check valid x bounds
-                        old_rotation = tetris.figure.rotation
-                        tetris.figure.rotation = rotation
-                        min_x = min([j for i in range(4) for j in range(4) if i*4 + j in tetris.figure.image()])
-                        max_x = max([j for i in range(4) for j in range(4) if i*4 + j in tetris.figure.image()])
-
-                        min_allowed_x = -min_x
-                        max_allowed_x = tetris.width - max_x - 1
-                        if self.env.action_space[i][1] < min_allowed_x or self.env.action_space[i][1] > max_allowed_x:
-                            q_values[:,i] = -float('inf')
-                        tetris.figure.rotation = old_rotation
-
-                # Choose best action from valid options
+                # Mask out actions that are not in the filtered legal moves.
+                for i, action in enumerate(self.env.action_space):
+                    if action not in legal_moves:
+                        q_values[0, i] = -float('inf')
                 return q_values.max(1).indices.view(1, 1)
         else:
-            # Choose random action
-            action_taken = random.choice([(r,x) for r,x in self.env.action_space if r in valid_rotations]) # chose from valid actions
+            # If the filtered legal moves are empty, fall back to previous valid moves based on valid rotations.
+            if not legal_moves:
+                legal_moves = [(r, x) for r, x in self.env.action_space if r in valid_rotations]
+            action_taken = random.choice(legal_moves)
             action_idx = self.env.action_space.index(action_taken)
-            return torch.tensor(
-                [[action_idx]],
-                device=self.device,
-                dtype=torch.long,
-            )
+            return torch.tensor([[action_idx]], device=self.device, dtype=torch.long)
 
     def train(self) -> None:
+        i = 0
         for _ in range(self.num_episodes):
             obs, info = self.env.reset()
             state = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
@@ -272,6 +301,8 @@ class DQNTrainer:
 
             # Tracking episode reward and plotting rewards.
             self.episode_rewards.append(episode_reward)
+            i += 1
+            print(f"Finished episode: {i} reward: {episode_reward}")
 
         print("Training complete")
         # Save model
@@ -371,7 +402,7 @@ if __name__ == "__main__":
     params = HyperParams()
 
     # Initialize DQNTrainer
-    trainer = DQNTrainer(env, memory, device, params, max_steps_per_episode=1500, num_episodes=2000)
+    trainer = DQNTrainer(env, memory, device, params, max_steps_per_episode=150, num_episodes=4000)
 
     # Train the agent
     trainer.train()
