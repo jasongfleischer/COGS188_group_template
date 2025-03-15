@@ -105,7 +105,7 @@ class MahjongGame:
             if change == 'draw':
                 tile = self.players[player][-1]
             elif change == 'discard':
-                assert player == self.current_player:
+                assert player == self.current_player
                 tile = self.discards[player][-1]
 
         if change == 'discard' and player == self.current_player:
@@ -343,9 +343,14 @@ class GlobalRewardPredictor(nn.Module):
         self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, 1)
         self.relu = nn.ReLU()
+        self.flatten = nn.Flatten
 
     def forward(self, state):
-        x = self.relu(self.fc1(state))
+        if type(state) == torch.Tensor:
+            x = self.flatten(state)
+        else:
+            x = self.flatten(torch.as_tensor(state))
+        x = self.relu(self.fc1(x))
         x = self.relu(self.fc2(x))
         x = self.fc3(x)
         return x
@@ -378,7 +383,7 @@ def look_ahead_features(state, player, drawn_tile):#deciding which tile to disca
     features.append(pair_count(state['hand'][player]))##adding current player's pair's number to features
     features.append(discard_count(state, drawn_tile))#adding number of discarded tiles same as drawn_tile to features
 
-    return torch.FloatTensor(features)
+    return torch.tensor(features)
 
 def decide_tile_to_discard(agent, state):
     hand = state["hand"][state["current_player"]]#current player hand    
@@ -401,8 +406,15 @@ def decide_tile_to_discard(agent, state):
 
 
 class GlobalRewardAgent:
-    def __init__(self, input_size, learning_rate=0.001):
-        self.model = GlobalRewardPredictor(input_size)
+    def __init__(self, input_size, learning_rate=0.001, device=None):
+        if device == None:
+            if torch.accelerator.is_available():
+                self.device = torch.accelerator.current_accelerator()
+            else:
+                self.device = 'cpu'
+        else:
+            self.device = device
+        self.model = GlobalRewardPredictor(input_size).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.criterion = nn.MSELoss()
 
@@ -418,6 +430,13 @@ class GlobalRewardAgent:
         self.optimizer.step()
         return loss.item()
     
+    def matrix_train(self, state_matrix, true_reward):
+        self.optimizer.zero_grad()
+        predicted_reward = self.predict_reward(state_matrix)
+        loss = self.criterion(predicted_reward, torch.FloatTensor([true_reward]))
+        loss.backward()
+        self.optimizer.step()
+        return loss.item()
 
     def calculate_reward(self, state, action, player, drawn_tile, is_win=False):
         """
