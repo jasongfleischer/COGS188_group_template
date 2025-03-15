@@ -34,13 +34,14 @@ class Tile:
     
 
 class MahjongGame:
-    def __init__(self, num_players=4, device=None):
+    def __init__(self, num_players=4, device=None, silent=False):
         self.num_players = num_players
         self.players = [[] for _ in range(num_players)]
         self.wall = self._create_wall()
         self.discards = [[] for _ in range(num_players)]
         self.current_player = 0
         self.scores = [0] * num_players
+        self.silent = silent
         if device == None:
             if torch.accelerator.is_available():
                 self.device = torch.accelerator.current_accelerator()
@@ -51,6 +52,9 @@ class MahjongGame:
         self.matrices = {}
         for n in range(num_players):
             self.matrices[n] = torch.zeros((37, 4)).to(self.device)
+
+    def toggle_silence(self):
+        self.silent = not self.silent
 
     def _create_wall(self):
         suits = ["mans", "pins", "sticks"]
@@ -91,6 +95,7 @@ class MahjongGame:
         return state
     
     def update_game_matrix(self, player, tile=None, change=None):
+        '''Update the matrix encoding of the state space for a given player'''
         if type(change) != str:
             raise TypeError(f"'change' should be of type 'str'")
         if change not in ('create', 'draw', 'discard'):
@@ -104,15 +109,50 @@ class MahjongGame:
         if tile is None:
             if change == 'draw':
                 tile = self.players[player][-1]
-            elif change == 'discard':
+            else:
                 assert player == self.current_player
                 tile = self.discards[player][-1]
 
         if change == 'discard' and player == self.current_player:
-            i = self.matrices[player][tile.num].index(1)
+            if in_place:
+                i = torch.argwhere(self.matrices[player][tile.num] == 1)
+                self.matrices[player][tile.num, i] = 2
+            else:
+                i = torch.argwhere(matrix[tile.num] == 1)[0]
+                matrix[tile.num, i] = 2
         else:
-            i = self.matrices[player][tile.num].index(0)
-        self.matrices[player][tile.num, i] = 1 if change == 'draw' else 2
+            if in_place:
+                i = torch.argwhere(self.matrices[player][tile.num] == 0)[0]
+                self.matrices[player][tile.num, i] = 1 if change == 'draw' else 3
+            else:
+                i = torch.argwhere(matrix[tile.num] == 0)[0]
+                matrix[tile.num, i] = 1 if change == 'draw' else 3
+        return (tile.num, i)
+
+    def get_updated_game_matrix(self, player, tile=None, change=None):
+        '''Create '''
+        if type(change) not in (str, None):
+            raise TypeError(f"'change' should be 'str' or 'None'")
+        if change not in ('draw', 'discard', None):
+            raise ValueError(f"'change' should be in ('draw', 'discard'), not {change}")
+        
+        matrix = self.matrices[player].copy()
+        if change is None:
+            return matrix
+        elif tile is None:
+            if change == 'draw':
+                tile = self.players[player][-1]
+            else:
+                assert player == self.current_player
+                tile = self.discards[player][-1]
+
+        if change == 'discard' and player == self.current_player:
+            i = torch.argwhere(matrix[tile.num] == 1)[0]
+            matrix[tile.num, i] = 2
+        else:
+            i = torch.argwhere(matrix[tile.num] == 0)[0]
+            matrix[tile.num, i] = 1 if change == 'draw' else 3
+        return matrix
     
     def check_win(self, player):
         # Check if the player's hand is a winning hand
@@ -124,14 +164,21 @@ class MahjongGame:
             return True
         return False
 
-    def play_turn(self):
+    def play_turn(self, use_matrix=False):
         tile = self.draw_tile(self.current_player)
         self.update_game_matrix(self.current_player, tile, 'draw')
-        print(f"Player {self.current_player} draws {tile}")
-        state = self.get_game_state() 
+        if not self.silent:
+            print(f"Player {self.current_player} draws {tile}")
+        
         if self.check_win(self.current_player):
-            return True 
-        best_tile_to_discard = decide_tile_to_discard(agent, self.get_game_state()) 
+            return True
+        
+        state = self.get_game_state() 
+        if use_matrix:
+            best_tile_to_discard = decide_tile_to_discard(agent, self.matrices[self.current_player])
+        else:
+            best_tile_to_discard = decide_tile_to_discard(agent, state)
+
         judge, best_tile_to_discard, player = self.can_pong_from_discard(self.current_player, state, best_tile_to_discard, num_players=4, epsilon=0.2)
         while judge:
             judge, best_tile_to_discard, player = self.can_pong_from_discard(player, self.get_game_state(), best_tile_to_discard, num_players=4, epsilon=0.2)
@@ -142,24 +189,53 @@ class MahjongGame:
         self.current_player = (player + 1) % self.num_players
         return False, self.current_player  
 
-    def can_pong_from_discard(self, current_player, state, discarded_tile, num_players = 4, epsilon=0.2):
+    def can_pong_from_discard(self, current_player, state, discarded_tile, num_players = 4, epsilon=0.2, use_matrix=False):
         """
         Check if the player can form a Pong (3 identical tiles) using a discarded tile.
         """
         # Count how many of the discarded tile exist in the player's hand
         for player in ((current_player + 1) % num_players, (current_player + 2) % num_players, (current_player + 3) % num_players):
-            hand = state['hand'][player]
-            count = sum(1 for tile in hand if tile.suit == discarded_tile.suit and tile.value == discarded_tile.value)
+            if use_matrix:
+                count = torch.count_nonzero(self.matrices[player][discarded_tile.num] == 1)
+            else:
+                hand = state['hand'][player]
+                count = sum(1 for tile in hand if tile.suit == discarded_tile.suit and tile.value == discarded_tile.value)
             # If the player has two of the discarded tile, they can form a Pong
             if count == 2 and np.random.rand() > epsilon:
-                state['hand'][player].append(discarded_tile)
-                print(f"Player {player} forms a Pong with {discarded_tile}")
+                self.players[player].append(discarded_tile)
+                if not use_matrix:
+                    state['hand'][player].append(discarded_tile)
+                self.get_updated_game_matrix(player, discarded_tile, 'add')
+                if not self.silent:
+                    print(f"Player {player} forms a Pong with {discarded_tile}")
                 if self.check_win(player):
-                    print(f"Player {player} wins!")
+                    if not self.silent:
+                        print(f"Player {player} wins!")
                     return True
-                best_tile_to_discard = decide_tile_to_discard(agent, self.get_game_state())#true or false
+                if use_matrix:
+                    best_tile_to_discard = self.decide_tile_to_discard(agent, player)
+                else:
+                    best_tile_to_discard = decide_tile_to_discard(agent, self.get_game_state())#true or false
                 return True, best_tile_to_discard, player
         return False, discarded_tile, current_player
+    
+    def decide_tile_to_discard(self, agent, player):
+        assert decision_type in ('heuristic', 'matrix')
+        best_tile = None
+        best_value = -float("inf")
+
+        with torch.no_grad():
+            for tile in torch.argwhere(state == 1):
+                idx = self.update_game_matrix(player, tile, 'discard')
+                predicted_value = agent.predict_reward(self.matrices[player])
+                if predicted_value < best_value:
+                    best_tile = tile
+                self.matrices[player][idx] = 1
+
+        if 1 not in self.matrices[player][best_tile.num]:
+            print(f"Error: {best_tile} not found in player's hand!")
+            return None
+        return best_tile
 
 
 def is_straight(tiles):
@@ -278,7 +354,6 @@ def can_form_meld(hand):
     return False
 
 
-
 '''
 def is_winning_hand(hand):
     """
@@ -334,8 +409,6 @@ def is_reach_possible(hand):
 '''
 
 
-
-
 class GlobalRewardPredictor(nn.Module):
     def __init__(self, input_size):
         super(GlobalRewardPredictor, self).__init__()
@@ -343,7 +416,7 @@ class GlobalRewardPredictor(nn.Module):
         self.fc2 = nn.Linear(128, 64)
         self.fc3 = nn.Linear(64, 1)
         self.relu = nn.ReLU()
-        self.flatten = nn.Flatten
+        self.flatten = nn.Flatten()
 
     def forward(self, state):
         if type(state) == torch.Tensor:
@@ -385,11 +458,12 @@ def look_ahead_features(state, player, drawn_tile):#deciding which tile to disca
 
     return torch.tensor(features)
 
+
 def decide_tile_to_discard(agent, state):
-    hand = state["hand"][state["current_player"]]#current player hand    
+    hand = state["hand"][state["current_player"]]#current player hand
     best_tile = None
-    best_value = -float("inf")  
- 
+    best_value = -float("inf")
+
     for tile in hand:
         state_features = look_ahead_features(state, state["current_player"], drawn_tile=tile)
         predicted_value = agent.predict_reward(state_features).item()
@@ -422,21 +496,24 @@ class GlobalRewardAgent:
         return self.model(state_features)
 
     def train(self, state, true_reward, drawn_tile):
-        self.optimizer.zero_grad()
         state_features = look_ahead_features(state, state['current_player'], drawn_tile)
         predicted_reward = self.predict_reward(state_features)#input state_features into NN
         loss = self.criterion(predicted_reward, torch.FloatTensor([true_reward]))
         loss.backward()
         self.optimizer.step()
+        self.optimizer.zero_grad()
         return loss.item()
     
     def matrix_train(self, state_matrix, true_reward):
-        self.optimizer.zero_grad()
         predicted_reward = self.predict_reward(state_matrix)
         loss = self.criterion(predicted_reward, torch.FloatTensor([true_reward]))
         loss.backward()
         self.optimizer.step()
+        self.optimizer.zero_grad()
         return loss.item()
+    
+    def get_reward(self, player, scores):
+        reward = 2 * scores[player] - sum(scores)
 
     def calculate_reward(self, state, action, player, drawn_tile, is_win=False):
         """
