@@ -22,6 +22,8 @@ class MahjongGame:
         self.wall = self._create_wall()
         self.discards = [[] for _ in range(num_players)]
         self.current_player = 0
+        self.num_tiles = 136
+        self.unique_tiles = 34
 
     def _create_wall(self):
         # Create and shuffle a standard set of 144 tiles
@@ -45,8 +47,26 @@ class MahjongGame:
         self.players[player].append(tile)
         return tile
 
+    def take_turn(self, player, tile):
+        current_hand = self.players[player]
+        all_melds = find_melds(current_hand)
+        for meld in all_melds:
+            if tile in meld:
+                reward = -0.1
+                break
+        if is_winning_hand(current_hand):
+            reward = 1
+            return (current_hand, tile, reward)
+        self.players[player].remove(tile)
+        self.discards[player].append(tile)
+        current_hand = self.players[player].remove(tile)
+        return (current_hand, tile, reward)
+            
+        
+
     def discard_tile(self, player, tile):
         # Player discards a tile
+        
         self.players[player].remove(tile)
         self.discards[player].append(tile)
 
@@ -59,13 +79,26 @@ class MahjongGame:
             return True
         return False
         
-
     def play_turn(self):
         # Simulate a player's turn
         tile = self.draw_tile(self.current_player)
         print(f"Player {self.current_player} draws {tile}")
         # Implement discard logic here
+    
+    def next_player(self):
         self.current_player = (self.current_player + 1) % self.num_players
+
+    def reset(self):
+        self.players = [[] for _ in range(self.num_players)]
+        self._create_wall()
+        self.deal_tiles()
+        self.current_player = 0
+        return self.players[self.current_player]
+    
+
+
+
+
 
 def is_straight(tiles):
     """
@@ -212,4 +245,5 @@ test_hand = [
 ]
 
 # print(can_form_meld(test_hand))
-print(is_winning_hand(test_hand))
+#print(is_winning_hand(test_hand))
+print(find_melds(test_hand))
