@@ -140,23 +140,13 @@ class WebotsCarEnv(gym.Env):
             reward -= 100
             
         # TODO: add lane deviation penalty
-        
-        # camera image to detect lane obstacle
-        image = self.camera.getImage()
-        if image:
-            np_img = np.frombuffer(image, dtype=np.uint8).reshape((self.camera.getHeight(), self.camera.getWidth(), 4))
-            img_gray = cv2.cvtColor(np_img, cv2.COLOR_BGRA2GRAY)
-            img_edges = cv2.Canny(img_gray, 50, 150)  # try edge detection to detect obstacles
-            obstacle_pixels = np.sum(img_edges) / 255.0  # count white pixels (edges)
-
-            if obstacle_pixels > 500:  # threshold for obstacle presence, need to tune
-                reward -= 10  # reduce reward for detected obstacles, need to tune
-            else:
-                reward += 5  # reward for clear path detected, need to tune
+        lane_penalty = self._calc_lane_penalty(k=0.05)
+        reward -= lane_penalty
+        print(f"lane penalty: {lane_penalty}")
         
         if self.gps_speed > MAX_SAFE_SPEED:
             reward -=50
-        else:
+        elif self.agent.getTime() > 10 or self.gps_speed >= CITY_SPEED_LIMIT: # give car 10 seconds to get up to city speed limits before penalizing
             speed_penalty = max(0, abs(self.gps_speed - CITY_SPEED_LIMIT) - 8) # penalize going more than +/- 8kph (5mph)
             reward -= speed_penalty
             
@@ -237,7 +227,113 @@ class WebotsCarEnv(gym.Env):
             self.gps_speed = speed_ms 
             self.gps_coords = list(coords)
             
+    
+    def _calc_lane_penalty(self, k=1.0):
+        frame = self._process_image()
+        edges = self._create_lane_mask(frame)
+        left_lane, right_lane = self._sliding_window_detect_lanes(edges)
+        
+        # avg of x pos of lane points 
+        x_left = np.mean([pt[0] for pt in left_lane]) if left_lane else None
+        x_right = np.mean([pt[0] for pt in right_lane]) if right_lane else None
+        
+        if x_left is None or x_right is None:
+            return -80
+    
+        x_vehicle = self.camera.getWidth() // 2
+        lane_center = (x_left + x_right) / 2
+        deviation = abs(x_vehicle - lane_center)
+        
+        penalty = k * (deviation ** 2)
+        
+        return penalty
+        
+      
+    def _process_image(self):
+        width = self.camera.getWidth()
+        height = self.camera.getHeight()
+        raw_image = self.camera.getImage()
+        
+        img = np.frombuffer(raw_image, np.uint8).reshape((height, width, 4))
+        img_bgr = img[:, :, :3] # remove alpha channel and only have BGR channels
+        
+        return img_bgr
+    
+    
+    def _create_lane_mask(self, frame):
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # hue, saturation, value color filtering
+
+        # yellow line detection
+        lower_bound_yellow = np.array([18, 94, 140], dtype=np.uint8)
+        upper_bound_yellow = np.array([48, 255, 255], dtype=np.uint8)
+        yellow_mask = cv2.inRange(hsv, lower_bound_yellow, upper_bound_yellow)
+        
+        # white lane detection
+        lower_bound_white = np.array([0, 0, 200], dtype=np.uint8)
+        upper_bound_white = np.array([255, 50, 255], dtype=np.uint8)
+        white_mask = cv2.inRange(hsv, lower_bound_white, upper_bound_white)
+        
+        combined_mask = cv2.bitwise_or(yellow_mask, white_mask)
+        
+        blurred = cv2.GaussianBlur(combined_mask, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150) # try edge detection to detect obstacles
+        return edges
+        
+    
+    # https://ieeexplore.ieee.org/document/9208278
+    # https://www.youtube.com/watch?v=ApYo6tXcjjQ
+    def _sliding_window_detect_lanes(self, edges):
+        height, width = edges.shape
+        
+        # only get histogram for lower half of image where the lanes are
+        histogram = np.sum(edges[height//2:, :], axis=0)
+        
+        midpoint = width // 2
+        left_x_base = np.argmax(histogram[:midpoint])  # yellow lane line
+        right_x_base = np.argmax(histogram[midpoint:]) + midpoint # white dotted lane line
+        
+        # sliding window parameters
+        num_windows = 10
+        window_height = height // num_windows
+        margin = 60
+        min_pixels = 30
+        
+        left_x_current = left_x_base
+        right_x_current = right_x_base
+        left_lane_pts = []
+        right_lane_pts = []
+        
+        for window in range(num_windows):
+            # sliding window boundaries
+            y_low = height - (window + 1) * window_height
+            y_high = height - window * window_height
+
+            x_left_low = int(left_x_current - margin)
+            x_left_high = int(left_x_current + margin)
+
+            x_right_low = int(right_x_current - margin)
+            x_right_high = int(right_x_current + margin)
+            
+            # get lane pixels in each widnow
+            left_lane_indices = np.where((edges[y_low:y_high, x_left_low:x_left_high] > 0))
+            right_lane_indices = np.where((edges[y_low:y_high, x_right_low:x_right_high] > 0))
+            
+            # yellow solid line
+            if len(left_lane_indices[0]) > min_pixels:
+                left_x_current = np.mean(left_lane_indices[1]) + x_left_low
+                
+            # white dotted line: check for lane pixels, if currently in gap use the previous window
+            if len(right_lane_indices[0]) > min_pixels:
+                right_x_current = np.mean(right_lane_indices[1]) + x_right_low
+            elif len(right_lane_pts) > 0:
+                right_x_current = right_lane_pts[-1][0]
+                
+            left_lane_pts.append((left_x_current, (y_low + y_high) // 2)) # yellow lane line
+            right_lane_pts.append((right_x_current, (y_low + y_high) // 2)) # white dotted lane line
+            
+        return left_lane_pts, right_lane_pts
+            
+            
             
     # TODO: Interpret LIDAR
     # TODO: Interpret Camera
-    # TODO: Interpret GPS
