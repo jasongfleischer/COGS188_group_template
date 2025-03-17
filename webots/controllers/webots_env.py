@@ -9,13 +9,13 @@ MIN_STEER_ANGLE = -0.5
 MAX_SPEED = 250.0   # ~ 155 mph
 MIN_SPEED = 0.0
 
-MAX_SAFE_SPEED = 112.65 # ~ 70 mph
+MAX_SAFE_SPEED = 112.65  # ~ 70 mph
 CITY_SPEED_LIMIT = 72.42  # ~ 45 mph
 
-MAX_SIM_TIME = 120 # 2 min max sim time
+MAX_SIM_TIME = 120  # 2 min max sim time
 
 GOAL_COORDS = [-36.75, 59.5]
-GOAL_THRESHOLD = [1.75, 0.5] # how close to goal to count as reached (in meters)
+GOAL_THRESHOLD = [1.75, 0.5]  # how close to goal to count as reached (in meters)
 
 
 class WebotsCarEnv(gym.Env):
@@ -36,15 +36,15 @@ class WebotsCarEnv(gym.Env):
         
         # state space 
         self.state_space = spaces.Dict({
-            "speed": spaces.Box(low=0, high=MAX_SPEED, shape=(1,), dtype=np.float32), # gps speed
-            "gps": spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32), # (x, y) gps coordinates
-            "lidar_dist": spaces.Box(low=0, high=100, shape=(1,), dtype=np.float32), # distance to nearest obstacle
+            "speed": spaces.Box(low=0, high=MAX_SPEED, shape=(1,), dtype=np.float32),  # gps speed
+            "gps": spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32),  # (x, y) gps coordinates
+            "lidar_dist": spaces.Box(low=0, high=100, shape=(1,), dtype=np.float32),  # distance to nearest obstacle
             "lidar_angle": spaces.Box(low=-180, high=180, shape=(1,), dtype=np.float32),  # angle to nearest obstacle
-            "lane_deviation": spaces.Box(low=0, high=np.inf, shape=(1,), dtype=np.float32), # the pixels away from center of the lane
-            "lane_mask": spaces.Box(low=0, high=1, shape=(64, 128, 1), dtype=np.uint8) # binaray mask for lane line (yellow line only)
+            "lane_deviation": spaces.Box(low=0, high=np.inf, shape=(1,), dtype=np.float32),  # pixels away from lane center
+            "lane_mask": spaces.Box(low=0, high=1, shape=(64, 128, 1), dtype=np.uint8)  # binary mask for lane line (yellow line only)
         })
         
-        # initialize the camera
+        # Initialize devices
         self.camera = self.agent.getDevice("camera")
         self.camera.enable(self.time_step)
 
@@ -54,9 +54,15 @@ class WebotsCarEnv(gym.Env):
         self.lidar = self.agent.getDevice("lidar")
         self.lidar.enable(self.time_step)
         
+        # Initialize state variables
         self.prev_gps_speed = 0.0
         self.gps_speed = 0.0
         self.gps_coords = [0.0, 0.0, 0.0]
+        
+        # Lidar state variables
+        self.lidar_dist = 100.0
+        self.lidar_angle = 0.0
+        self.collision_counter = 0
         
         self.reset_flag = self.agent.getFromDef("RESET_FLAG")
                         
@@ -83,7 +89,7 @@ class WebotsCarEnv(gym.Env):
         
         self.agent.setSteeringAngle(0)
         self.agent.setCruisingSpeed(0)
-        self.reset_flag.getField("translation").setSFVec3f([1, 0, 0]) # send out flag to dummy node
+        self.reset_flag.getField("translation").setSFVec3f([1, 0, 0])  # send out flag to dummy node
         
         self.agent.step() 
 
@@ -99,79 +105,66 @@ class WebotsCarEnv(gym.Env):
     def _get_state(self):
         speed = self.gps_speed
         position = self.gps.getValues() if self.gps else [0, 0, 0]
-        lidar_data = np.array(self.lidar.getRangeImage()) if self.lidar else np.array([0])
-        lidar_data = np.nan_to_num(lidar_data, nan=100.0, posinf=100.0, neginf=0.0)
-
         
-        if lidar_data is None or len(lidar_data) == 0:
-            lidar_data = np.array([100.0])  # Default to max range if no data
-
-        # Process LiDAR readings
-        lidar_features = self._process_lidar(lidar_data)
-            
+        # Process LIDAR data using the new helper function
+        lidar_dist, lidar_angle = self._process_lidar()
+        # Update internal lidar state variables
+        self.lidar_dist = lidar_dist
+        self.lidar_angle = lidar_angle
+        
         frame = self._process_image()
-        # debugging
-        # cv2.imsthow("Frame", frame)
         if frame is not None:
             edges = self._create_lane_mask(frame)
-            # cv2.imshow("Edges", edges)
         else:
-            edges = np.zeros((64, 128), dtype=np.float32)  # give a default blank image if no impage available
-
-        # debugging
-        # cv2.waitKey(0)  # press 0 to close windows
-        # cv2.destroyAllWindows()
+            edges = np.zeros((64, 128), dtype=np.uint8)  # default blank image if no image available
         
-        # prevent NaN values
-        if any(np.isnan(position)) or np.isnan(speed) or np.isnan(np.mean(lidar_data)):
-            raise ValueError(f"Invalid observation values: speed={speed}, position={position}, lidar={lidar_data}")
+        # Prevent NaN values in observations
+        if any(np.isnan(position)) or np.isnan(speed):
+            raise ValueError(f"Invalid observation values: speed={speed}, position={position}")
 
         lane_deviation = self._calc_lane_penalty(k=1)
         
-        # return the updataed values
         return {
             "speed": np.array([speed], dtype=np.float32),
             "gps": np.array([position[0], position[1]], dtype=np.float32),
-            "lidar_dist": np.array([lidar_features["nearest_object_distance"]], dtype=np.float32),
-            "lidar_angle": np.array([lidar_features["nearest_object_angle"]], dtype=np.float32),
-            "left_clearance": np.array([lidar_features["left_clearance"]], dtype=np.float32),
-            "right_clearance": np.array([lidar_features["right_clearance"]], dtype=np.float32),
-            "front_clearance": np.array([lidar_features["front_clearance"]], dtype=np.float32),
+            "lidar_dist": np.array([lidar_dist], dtype=np.float32), 
+            "lidar_angle": np.array([lidar_angle], dtype=np.float32),
             "lane_deviation": np.array([lane_deviation], dtype=np.float32),
             "lane_mask": np.expand_dims(edges, axis=-1).astype(np.uint8)
         }
     
-    
     def _compute_reward(self):
         reward = 0.0
         
-        # collision penalty
         if self._has_collided():
+            print("Collision penalty applied.")
             reward -= 100
             
         lane_penalty = self._calc_lane_penalty(k=0.5)
+        print(f"Lane penalty: {lane_penalty}")
         reward -= lane_penalty
         
         if self.gps_speed > MAX_SAFE_SPEED:
-            reward -=50
-        elif self.agent.getTime() > 10 or self.gps_speed >= CITY_SPEED_LIMIT: # give car 10 seconds to get up to city speed limits before penalizing
-            speed_penalty = max(0, abs(self.gps_speed - CITY_SPEED_LIMIT) - 8) # penalize going more than +/- 8kph (5mph)
+            print("Speed penalty for overspeed.")
+            reward -= 50
+        elif self.agent.getTime() > 10 or self.gps_speed >= CITY_SPEED_LIMIT:
+            speed_penalty = max(0, abs(self.gps_speed - CITY_SPEED_LIMIT) - 8)
+            print(f"Speed penalty: {speed_penalty}")
             reward -= speed_penalty
-            
+        
         if self.gps_speed > 0:
-            reward += 1  # reward for making progress
-            
+            reward += 1  # Progress reward
+        
+        if abs(self.lidar_angle) < 15 and self.lidar_dist < 2.0:
+            extra_penalty = (2.0 - self.lidar_dist) * 20
+            print(f"Obstacle ahead penalty: {extra_penalty}")
+            reward -= extra_penalty
+        
         if self._has_reached_goal():
+            print("Goal reached bonus applied.")
             reward += 100
-
-        # LiDAR-Based Obstacle Avoidance Rewards
-        if nearest_object_distance < 1.0:
-            reward -= 20  
-        elif nearest_object_distance < 2.5:
-            reward -= 10  
-        elif nearest_object_distance > 5.0:
-            reward += 5  
             
+        print(f"Total reward: {reward}")
         return reward
     
     
@@ -188,23 +181,52 @@ class WebotsCarEnv(gym.Env):
         if current_time >= MAX_SIM_TIME:
             print("Time limit reached.")
             return True
+            
+        return False  # Explicitly return False when not done
     
     
     def _has_collided(self):
-        #Detect collision using LiDAR and speed changes
-        lidar_distances = np.array(self.lidar.getRangeImage())
-        min_distance = np.min(lidar_distances)
+        # LIDAR collision detection using central region of lidar scan
+        if not self.lidar:
+            return False
 
-        # If an object is within 0.75m, it's likely a collision
-        lidar_collision = min_distance < 0.5
+        lidar_data = self.lidar.getRangeImage()
+        lidar_data = np.nan_to_num(lidar_data, nan=100.0, posinf=100.0, neginf=100.0)
+        n = len(lidar_data)
+        if n == 0:
+            return False
         
-        # Detect rapid deceleration (sudden stop)
-        speed_change = abs(self.prev_gps_speed - self.gps_speed)
-        speed_collision = self.prev_gps_speed > 2.0 and self.gps_speed < 0.5 and speed_change > 2.0
-
-        if lidar_collision or speed_collision:
-            print(f"Collision detected: lidar={min_distance}, speed_change={speed_change}")
+        # Get lidar field-of-view (FOV) in radians and compute beam angles
+        fov = self.lidar.getFov()  # in radians
+        angles = np.linspace(-fov/2, fov/2, n)
+        
+        # Define thresholds
+        collision_threshold = 1.0  # meters
+        angle_threshold = np.radians(30)  # ±30° in radians
+        min_beam_count = 3  # require at least 3 beams below threshold
+        
+        # Select beams within the central ±30° region
+        central_indices = np.where(np.abs(angles) <= angle_threshold)[0]
+        central_distances = lidar_data[central_indices]
+        num_beams_below = np.sum(central_distances < collision_threshold)
+        
+        collision_detected = num_beams_below >= min_beam_count
+        
+        # Temporal consistency: require condition to persist for at least 2 consecutive steps
+        if collision_detected:
+            self._collision_counter += 1
+        else:
+            self._collision_counter = 0
+        
+        if self._collision_counter >= 2:
+            print(f"Collision detected: {num_beams_below} beams below threshold in central region for {self._collision_counter} consecutive steps.")
             return True
+                
+        # Rapid speed change collision detection
+        speed_change = abs(self.prev_gps_speed - self.gps_speed)
+        if self.prev_gps_speed > 2.0 and self.gps_speed < 0.5 and speed_change > 2.0:
+            print(f"speed_change: {speed_change}")
+            return True 
         
         return False
     
@@ -231,39 +253,37 @@ class WebotsCarEnv(gym.Env):
             wheel_angle = MIN_STEER_ANGLE
             
         self.agent.setSteeringAngle(wheel_angle)
-        
         return
         
         
     def _calc_gps_speed(self):
         coords = self.gps.getValues()
-        speed_ms = self.gps.getSpeed() * 3.6
+        speed_ms = self.gps.getSpeed() * 3.6  # convert to km/h
         
         if coords is not None:
             self.prev_gps_speed = self.gps_speed 
             self.gps_speed = speed_ms 
             self.gps_coords = list(coords)
-            
+    
     
     def _calc_lane_penalty(self, k=1.0):
         frame = self._process_image()
         edges = self._create_lane_mask(frame)
         left_lane = self._sliding_window_detect_lanes(edges)
         
-        # avg of x pos of lane points closest to the car
-        # x_right = max(right_lane, key=lambda pt: pt[1])[0]
+        if not left_lane:
+            return 80  # heavy penalty if no lane detected
+        
         x_left = max(left_lane, key=lambda pt: pt[1])[0]
             
         if x_left == 0:
-            return -80
+            return 80
         
-    
         x_vehicle = self.camera.getWidth() // 2
-        lane_center = (x_left + 48 )
+        lane_center = (x_left + 48)
         deviation = abs(x_vehicle - lane_center)
         
-        penalty = k * (deviation)
-        
+        penalty = k * deviation
         return penalty
         
       
@@ -273,126 +293,83 @@ class WebotsCarEnv(gym.Env):
         raw_image = self.camera.getImage()
         
         img = np.frombuffer(raw_image, np.uint8).reshape((height, width, 4))
-        img_bgr = img[:, :, :3] # remove alpha channel and only have BGR channels
-        
+        img_bgr = img[:, :, :3]  # remove alpha channel
         return img_bgr
     
     
     def _create_lane_mask(self, frame):
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # hue, saturation, value color filtering
-
-        # yellow line detection
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         lower_bound_yellow = np.array([18, 94, 140], dtype=np.uint8)
         upper_bound_yellow = np.array([48, 255, 255], dtype=np.uint8)
         yellow_mask = cv2.inRange(hsv, lower_bound_yellow, upper_bound_yellow)
         
-        # white line detection
-        # lower_bound_white = np.array([0, 0, 150], dtype=np.uint8)
-        # upper_bound_white = np.array([180, 35, 255], dtype=np.uint8)
-        # white_mask = cv2.inRange(hsv, lower_bound_white, upper_bound_white)
-        
-        # combined_mask = cv2.bitwise_or(yellow_mask, white_mask)
-
-        # strengthen dashed lines
-        # kernel = np.ones((3, 3), np.uint8)
-        # combined_mask = cv2.dilate(combined_mask, kernel, iterations=2)
-        
         height, width = frame.shape[:2]
         mask_roi = np.zeros_like(yellow_mask)
-        
-        # focus on bottom half of the frame
         roi_vertices = np.array([[
             (0, height), (width, height), (width, height//2), (0, height//2)
         ]], dtype=np.int32)
-
         cv2.fillPoly(mask_roi, roi_vertices, 255)
-        combined_mask = cv2.bitwise_and(yellow_mask, mask_roi)  # apply region mask
-
-        edges = cv2.Canny(combined_mask, 80, 150) 
+        combined_mask = cv2.bitwise_and(yellow_mask, mask_roi)
+        edges = cv2.Canny(combined_mask, 80, 150)
         return edges
         
     
-    # https://ieeexplore.ieee.org/document/9208278
-    # https://www.youtube.com/watch?v=ApYo6tXcjjQ
     def _sliding_window_detect_lanes(self, edges):
         height, width = edges.shape
-        
-        # only get histogram for lower half of image where the lanes are
         histogram = np.sum(edges[height//2:, :], axis=0)
-        
         midpoint = width // 2
-        left_x_base = np.argmax(histogram[:midpoint])  # yellow lane line
-        # right_x_base = np.argmax(histogram[midpoint:]) + midpoint # white dotted lane line
+        left_x_base = np.argmax(histogram[:midpoint])
         
-        # sliding window parameters
         num_windows = 10
         window_height = height // num_windows
         margin = 60
         min_pixels = 30
         
         left_x_current = left_x_base
-        # right_x_current = right_x_base
         left_lane_pts = []
-        # right_lane_pts = []
         
         for window in range(num_windows):
-            # sliding window boundaries
             y_low = height - (window + 1) * window_height
             y_high = height - window * window_height
 
             x_left_low = int(left_x_current - margin)
             x_left_high = int(left_x_current + margin)
-
-            # x_right_low = int(right_x_current - margin)
-            # x_right_high = int(right_x_current + margin)
             
-            # get lane pixels in each widnow
-            left_lane_indices = np.where((edges[y_low:y_high, x_left_low:x_left_high] > 0))
-            # right_lane_indices = np.where((edges[y_low:y_high, x_right_low:x_right_high] > 0))
+            # Ensure indices are within image bounds
+            window_slice = edges[y_low:y_high, max(x_left_low, 0):min(x_left_high, width)]
+            left_lane_indices = np.where(window_slice > 0)
             
-            # yellow solid line
             if len(left_lane_indices[0]) > min_pixels:
-                left_x_current = np.mean(left_lane_indices[1]) + x_left_low
+                left_x_current = np.mean(left_lane_indices[1]) + max(x_left_low, 0)
                 
-            # white dotted line: check for lane pixels, if currently in gap use the previous window
-            # if len(right_lane_indices[0]) > min_pixels:
-            #     right_x_current = np.mean(right_lane_indices[1]) + x_right_low
-            # elif len(right_lane_pts) > 0:
-            #     right_x_current = right_lane_pts[-1][0]
-                
-            left_lane_pts.append((left_x_current, (y_low + y_high) // 2)) # yellow lane line
-            # right_lane_pts.append((right_x_current, (y_low + y_high) // 2)) # white dotted lane line
+            left_lane_pts.append((left_x_current, (y_low + y_high) // 2))
             
-        return left_lane_pts#, right_lane_pts
-             
-    # TODO: Interpret LIDAR
+        return left_lane_pts
+        
+    
     def _process_lidar(self):
-        #Extracts useful information from raw LiDAR readings
-        lidar_data = np.array(self.lidar.getRangeImage())
-
-        # Ensure no NaN or invalid values
+        """
+        Processes the Webots LIDAR data to compute:
+         - The minimum distance to an obstacle.
+         - The angle (in degrees) corresponding to that measurement.
+        """
+        if not self.lidar:
+            return 100.0, 0.0
+        
+        lidar_data = self.lidar.getRangeImage()
+        # Replace NaN/infinite values with a safe maximum (assumed to be 100.0)
         lidar_data = np.nan_to_num(lidar_data, nan=100.0, posinf=100.0, neginf=0.0)
-
-        num_rays = len(lidar_data)
-
-        # Identify closest obstacle
+        if len(lidar_data) == 0:
+            return 100.0, 0.0
+        
         min_distance = np.min(lidar_data)
-        min_index = np.argmin(lidar_data)  # The index (angle) of closest obstacle
-
-        # Convert index to an angle (assuming -180° to 180° field of view)
-        angle_resolution = 360 / num_rays  # Each LiDAR ray covers an equal angle
-        nearest_object_angle = (min_index * angle_resolution) - 180  # Convert to degrees
-
-        # Compute sector-wise distances
-        left_side = np.mean(lidar_data[:num_rays//3])  # Average of left third
-        right_side = np.mean(lidar_data[-num_rays//3:])  # Average of right third
-        front = np.mean(lidar_data[num_rays//3 : 2 * num_rays//3])  # Middle third
-
-        return {
-            "nearest_object_distance": min_distance,
-            "nearest_object_angle": nearest_object_angle,
-            "left_clearance": left_side,
-            "right_clearance": right_side,
-            "front_clearance": front,
-            "lidar_raw": lidar_data
-        }
+        min_index = np.argmin(lidar_data)
+        
+        fov = self.lidar.getFov()  # Field of view in radians
+        n = len(lidar_data)
+        # Calculate the angle corresponding to the minimum distance measurement.
+        angle_rad = -fov / 2 + (min_index * fov / (n - 1))
+        angle_deg = np.degrees(angle_rad)
+        
+        print(f"Lidar - min_distance: {min_distance:.2f}, angle_deg: {angle_deg:.2f}")
+        return min_distance, angle_deg

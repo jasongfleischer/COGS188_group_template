@@ -23,5 +23,3 @@ for step in range(1000):
 
 print("Episode finished. Resetting environment.")
 obs = env.reset()
-
-
