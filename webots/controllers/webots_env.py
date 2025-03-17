@@ -132,8 +132,11 @@ class WebotsCarEnv(gym.Env):
         return {
             "speed": np.array([speed], dtype=np.float32),
             "gps": np.array([position[0], position[1]], dtype=np.float32),
-            "lidar_dist": np.array([np.min(lidar_data)], dtype=np.float32), 
-            "lidar_angle": np.array([lidar_angle], dtype=np.float32),
+            "lidar_dist": np.array([lidar_features["nearest_object_distance"]], dtype=np.float32),
+            "lidar_angle": np.array([lidar_features["nearest_object_angle"]], dtype=np.float32),
+            "left_clearance": np.array([lidar_features["left_clearance"]], dtype=np.float32),
+            "right_clearance": np.array([lidar_features["right_clearance"]], dtype=np.float32),
+            "front_clearance": np.array([lidar_features["front_clearance"]], dtype=np.float32),
             "lane_deviation": np.array([lane_deviation], dtype=np.float32),
             "lane_mask": np.expand_dims(edges, axis=-1).astype(np.uint8)
         }
@@ -160,6 +163,14 @@ class WebotsCarEnv(gym.Env):
             
         if self._has_reached_goal():
             reward += 100
+
+        # LiDAR-Based Obstacle Avoidance Rewards
+        if nearest_object_distance < 1.0:
+            reward -= 20  
+        elif nearest_object_distance < 2.5:
+            reward -= 10  
+        elif nearest_object_distance > 5.0:
+            reward += 5  
             
         return reward
     
@@ -180,12 +191,12 @@ class WebotsCarEnv(gym.Env):
     
     
     def _has_collided(self):
-        """Detect collision using LiDAR and speed changes"""
+        #Detect collision using LiDAR and speed changes
         lidar_distances = np.array(self.lidar.getRangeImage())
         min_distance = np.min(lidar_distances)
 
         # If an object is within 0.75m, it's likely a collision
-        lidar_collision = min_distance < 0.75
+        lidar_collision = min_distance < 0.5
         
         # Detect rapid deceleration (sudden stop)
         speed_change = abs(self.prev_gps_speed - self.gps_speed)
