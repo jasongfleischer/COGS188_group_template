@@ -6,7 +6,7 @@ import random
 import numpy as np
         
 env = WebotsCarEnv()
-obs, _ = env.reset()
+obs = env.reset()
 
 for step in range(1000):
     steering_angle = random.uniform(-0.9, 0.9) 
@@ -22,6 +22,6 @@ for step in range(1000):
         break
 
 print("Episode finished. Resetting environment.")
-obs, _ = env.reset()
+obs = env.reset()
 
 

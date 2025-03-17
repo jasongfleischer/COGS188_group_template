@@ -28,19 +28,21 @@ class WebotsCarEnv(gym.Env):
         self.time_step = int(self.agent.getBasicTimeStep())
         
         # action space: [steering, speed]
-        self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
+        self.action_space = spaces.Box(
+            low=np.array([MIN_STEER_ANGLE, MIN_SPEED]), 
+            high=np.array([MAX_STEER_ANGLE, MAX_SPEED]),
+            dtype=np.float32
+        )
         
-        # TODO: Update observation space to include camera output & other stuff
-        # basic settings for camera data.
-        self.observation_space = spaces.Dict({
-            "speed": spaces.Box(low=0, high=MAX_SPEED, shape=(1,), dtype=np.float32),
-            "gps_x": spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32),
-            "gps_y": spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32),
-            "lidar_avg": spaces.Box(low=0, high=100, shape=(1,), dtype=np.float32),
-            "camera": spaces.Box(low=0, high=1, shape=(84, 84), dtype=np.float32)  # Normalized grayscale image
+        # state space 
+        self.state_space = spaces.Dict({
+            "speed": spaces.Box(low=0, high=MAX_SPEED, shape=(1,), dtype=np.float32), # gps speed
+            "gps": spaces.Box(low=-np.inf, high=np.inf, shape=(2,), dtype=np.float32), # (x, y) gps coordinates
+            "lidar_dist": spaces.Box(low=0, high=100, shape=(1,), dtype=np.float32), # distance to nearest obstacle
+            "lidar_angle": spaces.Box(low=-180, high=180, shape=(1,), dtype=np.float32),  # angle to nearest obstacle
+            "lane_deviation": spaces.Box(low=0, high=np.inf, shape=(1,), dtype=np.float32), # the pixels away from center of the lane
+            "lane_mask": spaces.Box(low=0, high=1, shape=(64, 128, 1), dtype=np.uint8) # binaray mask for lane line (yellow line only)
         })
-        # obs space: [speed, position[0], position[1], np.mean(lidar_data)]
-        # self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32)
         
         # initialize the camera
         self.camera = self.agent.getDevice("camera")
@@ -69,11 +71,11 @@ class WebotsCarEnv(gym.Env):
 
         self.agent.step()
 
-        observation = self._get_observation()
+        state = self._get_state()
         reward = self._compute_reward()
         done = self._is_done()
 
-        return observation, reward, done, {}
+        return state, reward, done
     
     
     def reset(self, seed=None, options=None):
@@ -85,17 +87,17 @@ class WebotsCarEnv(gym.Env):
         
         self.agent.step() 
 
-        obs = self._get_observation()
+        state = self._get_state()
 
-        return obs, {}
+        return state
     
     
     def render(self, mode="human"):
         pass 
     
     
-    def _get_observation(self):
-        speed = self.agent.getCurrentSpeed()
+    def _get_state(self):
+        speed = self.gps_speed
         position = self.gps.getValues() if self.gps else [0, 0, 0]
         lidar_data = self.lidar.getRangeImage() if self.lidar else [0]
         lidar_data = np.nan_to_num(lidar_data, nan=0.0, posinf=100.0, neginf=0.0)
@@ -103,35 +105,38 @@ class WebotsCarEnv(gym.Env):
         if lidar_data is None or len(lidar_data) == 0:
             lidar_data = [0]
             
-        if speed is None or np.isnan(speed) or np.isinf(speed):
-            speed = 0
-            
-            # begin to process camera image data
-        image = self.camera.getImage() # get raw image data (flat buffer; BGRA format)
-        if image:
-            np_img = np.frombuffer(image, dtype=np.uint8).reshape((self.camera.getHeight(), self.camera.getWidth(), 4)) # convert rawbuffer to numpy array
-            img_bgr = cv2.cvtColor(np_img, cv2.COLOR_BGRA2BGR)  # convert webots BGRA to BGR (remove Alpha) to ensure correct color representation, optional
-            img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)  # convert to grayscale(less complexity, good for edge detection), optional
-            img_resized = cv2.resize(img_gray, (84, 84))  # resize for CNN to reduce memory use
-            img_norm = img_resized.astype(np.float32) / 255.0  # normalize pixel values
+        frame = self._process_image()
+        # debugging
+        # cv2.imsthow("Frame", frame)
+        if frame is not None:
+            edges = self._create_lane_mask(frame)
+            # cv2.imshow("Edges", edges)
         else:
-            img_norm = np.zeros((84, 84), dtype=np.float32)  # give a default blank image if no impage available
+            edges = np.zeros((64, 128), dtype=np.float32)  # give a default blank image if no impage available
 
+        # debugging
+        # cv2.waitKey(0)  # press 0 to close windows
+        # cv2.destroyAllWindows()
+        
         # prevent NaN values
         if any(np.isnan(position)) or np.isnan(speed) or np.isnan(np.mean(lidar_data)):
             raise ValueError(f"Invalid observation values: speed={speed}, position={position}, lidar={lidar_data}")
 
+        lane_deviation = self._calc_lane_penalty(k=1)
+        
+        lidar_angle = 0 # TODO: ADD LIDAR ANGLE FUNCTION
+        
         # return the updataed values
         return {
             "speed": np.array([speed], dtype=np.float32),
-            "gps_x": np.array([position[0]], dtype=np.float32),
-            "gps_y": np.array([position[1]], dtype=np.float32),
-            "lidar_avg": np.array([np.mean(lidar_data)], dtype=np.float32),
-            "camera": img_norm
+            "gps": np.array([position[0], position[1]], dtype=np.float32),
+            "lidar_dist": np.array([np.min(lidar_data)], dtype=np.float32), 
+            "lidar_angle": np.array([lidar_angle], dtype=np.float32),
+            "lane_deviation": np.array([lane_deviation], dtype=np.float32),
+            "lane_mask": np.expand_dims(edges, axis=-1).astype(np.uint8)
         }
     
     
-    # TODO: Implement actual rewards function
     def _compute_reward(self):
         reward = 0.0
         
@@ -139,10 +144,8 @@ class WebotsCarEnv(gym.Env):
         if self._has_collided():
             reward -= 100
             
-        # TODO: add lane deviation penalty
-        lane_penalty = self._calc_lane_penalty(k=0.05)
+        lane_penalty = self._calc_lane_penalty(k=0.5)
         reward -= lane_penalty
-        print(f"lane penalty: {lane_penalty}")
         
         if self.gps_speed > MAX_SAFE_SPEED:
             reward -=50
@@ -231,20 +234,21 @@ class WebotsCarEnv(gym.Env):
     def _calc_lane_penalty(self, k=1.0):
         frame = self._process_image()
         edges = self._create_lane_mask(frame)
-        left_lane, right_lane = self._sliding_window_detect_lanes(edges)
+        left_lane = self._sliding_window_detect_lanes(edges)
         
-        # avg of x pos of lane points 
-        x_left = np.mean([pt[0] for pt in left_lane]) if left_lane else None
-        x_right = np.mean([pt[0] for pt in right_lane]) if right_lane else None
-        
-        if x_left is None or x_right is None:
+        # avg of x pos of lane points closest to the car
+        # x_right = max(right_lane, key=lambda pt: pt[1])[0]
+        x_left = max(left_lane, key=lambda pt: pt[1])[0]
+            
+        if x_left == 0:
             return -80
+        
     
         x_vehicle = self.camera.getWidth() // 2
-        lane_center = (x_left + x_right) / 2
+        lane_center = (x_left + 48 )
         deviation = abs(x_vehicle - lane_center)
         
-        penalty = k * (deviation ** 2)
+        penalty = k * (deviation)
         
         return penalty
         
@@ -268,15 +272,29 @@ class WebotsCarEnv(gym.Env):
         upper_bound_yellow = np.array([48, 255, 255], dtype=np.uint8)
         yellow_mask = cv2.inRange(hsv, lower_bound_yellow, upper_bound_yellow)
         
-        # white lane detection
-        lower_bound_white = np.array([0, 0, 200], dtype=np.uint8)
-        upper_bound_white = np.array([255, 50, 255], dtype=np.uint8)
-        white_mask = cv2.inRange(hsv, lower_bound_white, upper_bound_white)
+        # white line detection
+        # lower_bound_white = np.array([0, 0, 150], dtype=np.uint8)
+        # upper_bound_white = np.array([180, 35, 255], dtype=np.uint8)
+        # white_mask = cv2.inRange(hsv, lower_bound_white, upper_bound_white)
         
-        combined_mask = cv2.bitwise_or(yellow_mask, white_mask)
+        # combined_mask = cv2.bitwise_or(yellow_mask, white_mask)
+
+        # strengthen dashed lines
+        # kernel = np.ones((3, 3), np.uint8)
+        # combined_mask = cv2.dilate(combined_mask, kernel, iterations=2)
         
-        blurred = cv2.GaussianBlur(combined_mask, (5, 5), 0)
-        edges = cv2.Canny(blurred, 50, 150) # try edge detection to detect obstacles
+        height, width = frame.shape[:2]
+        mask_roi = np.zeros_like(yellow_mask)
+        
+        # focus on bottom half of the frame
+        roi_vertices = np.array([[
+            (0, height), (width, height), (width, height//2), (0, height//2)
+        ]], dtype=np.int32)
+
+        cv2.fillPoly(mask_roi, roi_vertices, 255)
+        combined_mask = cv2.bitwise_and(yellow_mask, mask_roi)  # apply region mask
+
+        edges = cv2.Canny(combined_mask, 80, 150) 
         return edges
         
     
@@ -290,7 +308,7 @@ class WebotsCarEnv(gym.Env):
         
         midpoint = width // 2
         left_x_base = np.argmax(histogram[:midpoint])  # yellow lane line
-        right_x_base = np.argmax(histogram[midpoint:]) + midpoint # white dotted lane line
+        # right_x_base = np.argmax(histogram[midpoint:]) + midpoint # white dotted lane line
         
         # sliding window parameters
         num_windows = 10
@@ -299,9 +317,9 @@ class WebotsCarEnv(gym.Env):
         min_pixels = 30
         
         left_x_current = left_x_base
-        right_x_current = right_x_base
+        # right_x_current = right_x_base
         left_lane_pts = []
-        right_lane_pts = []
+        # right_lane_pts = []
         
         for window in range(num_windows):
             # sliding window boundaries
@@ -311,29 +329,26 @@ class WebotsCarEnv(gym.Env):
             x_left_low = int(left_x_current - margin)
             x_left_high = int(left_x_current + margin)
 
-            x_right_low = int(right_x_current - margin)
-            x_right_high = int(right_x_current + margin)
+            # x_right_low = int(right_x_current - margin)
+            # x_right_high = int(right_x_current + margin)
             
             # get lane pixels in each widnow
             left_lane_indices = np.where((edges[y_low:y_high, x_left_low:x_left_high] > 0))
-            right_lane_indices = np.where((edges[y_low:y_high, x_right_low:x_right_high] > 0))
+            # right_lane_indices = np.where((edges[y_low:y_high, x_right_low:x_right_high] > 0))
             
             # yellow solid line
             if len(left_lane_indices[0]) > min_pixels:
                 left_x_current = np.mean(left_lane_indices[1]) + x_left_low
                 
             # white dotted line: check for lane pixels, if currently in gap use the previous window
-            if len(right_lane_indices[0]) > min_pixels:
-                right_x_current = np.mean(right_lane_indices[1]) + x_right_low
-            elif len(right_lane_pts) > 0:
-                right_x_current = right_lane_pts[-1][0]
+            # if len(right_lane_indices[0]) > min_pixels:
+            #     right_x_current = np.mean(right_lane_indices[1]) + x_right_low
+            # elif len(right_lane_pts) > 0:
+            #     right_x_current = right_lane_pts[-1][0]
                 
             left_lane_pts.append((left_x_current, (y_low + y_high) // 2)) # yellow lane line
-            right_lane_pts.append((right_x_current, (y_low + y_high) // 2)) # white dotted lane line
+            # right_lane_pts.append((right_x_current, (y_low + y_high) // 2)) # white dotted lane line
             
-        return left_lane_pts, right_lane_pts
-            
-            
-            
+        return left_lane_pts#, right_lane_pts
+             
     # TODO: Interpret LIDAR
-    # TODO: Interpret Camera
