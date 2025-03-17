@@ -1,7 +1,6 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-import cv2
 from vehicle import Driver
 
 MAX_STEER_ANGLE = 0.5
@@ -31,18 +30,9 @@ class WebotsCarEnv(gym.Env):
         self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         
         # TODO: Update observation space to include camera output & other stuff
-        # basic settings for camera data.
-        self.observation_space = spaces.Dict({
-            "speed": spaces.Box(low=0, high=MAX_SPEED, shape=(1,), dtype=np.float32),
-            "gps_x": spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32),
-            "gps_y": spaces.Box(low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32),
-            "lidar_avg": spaces.Box(low=0, high=100, shape=(1,), dtype=np.float32),
-            "camera": spaces.Box(low=0, high=1, shape=(84, 84), dtype=np.float32)  # Normalized grayscale image
-        })
         # obs space: [speed, position[0], position[1], np.mean(lidar_data)]
-        # self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(4,), dtype=np.float32)
         
-        # initialize the camera
         self.camera = self.agent.getDevice("camera")
         self.camera.enable(self.time_step)
 
@@ -107,36 +97,16 @@ class WebotsCarEnv(gym.Env):
         lidar_data = self.lidar.getRangeImage() if self.lidar else [0]
         lidar_data = np.nan_to_num(lidar_data, nan=0.0, posinf=100.0, neginf=0.0)
         
-        # Ensure that observation values are valid
         if lidar_data is None or len(lidar_data) == 0:
             lidar_data = [0]
             
         if speed is None or np.isnan(speed) or np.isinf(speed):
             speed = 0
 
-        # begin to process camera image data
-        image = self.camera.getImage() # get raw image data (flat buffer; BGRA format)
-        if image:
-            np_img = np.frombuffer(image, dtype=np.uint8).reshape((self.camera.getHeight(), self.camera.getWidth(), 4)) # convert rawbuffer to numpy array
-            img_bgr = cv2.cvtColor(np_img, cv2.COLOR_BGRA2BGR)  # convert webots BGRA to BGR (remove Alpha) to ensure correct color representation, optional
-            img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)  # convert to grayscale(less complexity, good for edge detection), optional
-            img_resized = cv2.resize(img_gray, (84, 84))  # resize for CNN to reduce memory use
-            img_norm = img_resized.astype(np.float32) / 255.0  # normalize pixel values
-        else:
-            img_norm = np.zeros((84, 84), dtype=np.float32)  # give a default blank image if no impage available
-
-        # prevent NaN values
         if any(np.isnan(position)) or np.isnan(speed) or np.isnan(np.mean(lidar_data)):
             raise ValueError(f"Invalid observation values: speed={speed}, position={position}, lidar={lidar_data}")
 
-        # return the updataed values
-        return {
-            "speed": np.array([speed], dtype=np.float32),
-            "gps_x": np.array([position[0]], dtype=np.float32),
-            "gps_y": np.array([position[1]], dtype=np.float32),
-            "lidar_avg": np.array([np.mean(lidar_data)], dtype=np.float32),
-            "camera": img_norm
-        }
+        return np.array([speed, position[0], position[1], np.mean(lidar_data)], dtype=np.float32)
     
     
     # TODO: Implement actual rewards function
@@ -147,19 +117,6 @@ class WebotsCarEnv(gym.Env):
         if self._has_collided():
             reward -= 100
             
-        # camera image to detect lane obstacle
-        image = self.camera.getImage()
-        if image:
-            np_img = np.frombuffer(image, dtype=np.uint8).reshape((self.camera.getHeight(), self.camera.getWidth(), 4))
-            img_gray = cv2.cvtColor(np_img, cv2.COLOR_BGRA2GRAY)
-            img_edges = cv2.Canny(img_gray, 50, 150)  # try edge detection to detect obstacles
-            obstacle_pixels = np.sum(img_edges) / 255.0  # count white pixels (edges)
-
-            if obstacle_pixels > 500:  # threshold for obstacle presence, need to tune
-                reward -= 10  # reduce reward for detected obstacles, need to tune
-            else:
-                reward += 5  # reward for clear path detected, need to tune
-
         # TODO: add lane deviation penalty
         
         if self.gps_speed > MAX_SAFE_SPEED:
