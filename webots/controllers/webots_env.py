@@ -72,11 +72,6 @@ class WebotsCarEnv(gym.Env):
         observation = self._get_observation()
         reward = self._compute_reward()
         done = self._is_done()
-        
-        if np.isnan(observation).any():
-            raise ValueError("Observation contains NaN values")
-        if np.isnan(reward):
-            raise ValueError("Reward contains NaN values")
 
         return observation, reward, done, {}
     
@@ -91,8 +86,6 @@ class WebotsCarEnv(gym.Env):
         self.agent.step() 
 
         obs = self._get_observation()
-        if np.isnan(obs).any():
-            raise ValueError(f"NaN detected in reset observation: {obs}")
 
         return obs, {}
     
