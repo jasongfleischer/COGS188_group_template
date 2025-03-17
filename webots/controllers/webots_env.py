@@ -99,11 +99,15 @@ class WebotsCarEnv(gym.Env):
     def _get_state(self):
         speed = self.gps_speed
         position = self.gps.getValues() if self.gps else [0, 0, 0]
-        lidar_data = self.lidar.getRangeImage() if self.lidar else [0]
-        lidar_data = np.nan_to_num(lidar_data, nan=0.0, posinf=100.0, neginf=0.0)
+        lidar_data = np.array(self.lidar.getRangeImage()) if self.lidar else np.array([0])
+        lidar_data = np.nan_to_num(lidar_data, nan=100.0, posinf=100.0, neginf=0.0)
+
         
         if lidar_data is None or len(lidar_data) == 0:
-            lidar_data = [0]
+            lidar_data = np.array([100.0])  # Default to max range if no data
+
+        # Process LiDAR readings
+        lidar_features = self._process_lidar(lidar_data)
             
         frame = self._process_image()
         # debugging
@@ -123,8 +127,6 @@ class WebotsCarEnv(gym.Env):
             raise ValueError(f"Invalid observation values: speed={speed}, position={position}, lidar={lidar_data}")
 
         lane_deviation = self._calc_lane_penalty(k=1)
-        
-        lidar_angle = 0 # TODO: ADD LIDAR ANGLE FUNCTION
         
         # return the updataed values
         return {
@@ -178,19 +180,20 @@ class WebotsCarEnv(gym.Env):
     
     
     def _has_collided(self):
-        # BUG: sometimes lidar detects collision when there are no obstacles present
-        # LIDAR collision detection
+        """Detect collision using LiDAR and speed changes"""
         lidar_distances = np.array(self.lidar.getRangeImage())
         min_distance = np.min(lidar_distances)
-        if min_distance < 1.0:
-            print(f"lidar dist: {min_distance}")
-            return True
-                
-        # rapid speed change collision detection
+
+        # If an object is within 0.75m, it's likely a collision
+        lidar_collision = min_distance < 0.75
+        
+        # Detect rapid deceleration (sudden stop)
         speed_change = abs(self.prev_gps_speed - self.gps_speed)
-        if self.prev_gps_speed > 2.0 and self.gps_speed < 0.5 and speed_change > 2.0:
-            print(f"speed_change: {speed_change}")
-            return True 
+        speed_collision = self.prev_gps_speed > 2.0 and self.gps_speed < 0.5 and speed_change > 2.0
+
+        if lidar_collision or speed_collision:
+            print(f"Collision detected: lidar={min_distance}, speed_change={speed_change}")
+            return True
         
         return False
     
@@ -352,3 +355,33 @@ class WebotsCarEnv(gym.Env):
         return left_lane_pts#, right_lane_pts
              
     # TODO: Interpret LIDAR
+    def _process_lidar(self):
+        #Extracts useful information from raw LiDAR readings
+        lidar_data = np.array(self.lidar.getRangeImage())
+
+        # Ensure no NaN or invalid values
+        lidar_data = np.nan_to_num(lidar_data, nan=100.0, posinf=100.0, neginf=0.0)
+
+        num_rays = len(lidar_data)
+
+        # Identify closest obstacle
+        min_distance = np.min(lidar_data)
+        min_index = np.argmin(lidar_data)  # The index (angle) of closest obstacle
+
+        # Convert index to an angle (assuming -180° to 180° field of view)
+        angle_resolution = 360 / num_rays  # Each LiDAR ray covers an equal angle
+        nearest_object_angle = (min_index * angle_resolution) - 180  # Convert to degrees
+
+        # Compute sector-wise distances
+        left_side = np.mean(lidar_data[:num_rays//3])  # Average of left third
+        right_side = np.mean(lidar_data[-num_rays//3:])  # Average of right third
+        front = np.mean(lidar_data[num_rays//3 : 2 * num_rays//3])  # Middle third
+
+        return {
+            "nearest_object_distance": min_distance,
+            "nearest_object_angle": nearest_object_angle,
+            "left_clearance": left_side,
+            "right_clearance": right_side,
+            "front_clearance": front,
+            "lidar_raw": lidar_data
+        }
