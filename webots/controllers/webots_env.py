@@ -113,10 +113,15 @@ class WebotsCarEnv(gym.Env):
         self.lidar_angle = lidar_angle
         
         frame = self._process_image()
+        # cv2.imsthow("Frame", frame)
         if frame is not None:
             edges = self._create_lane_mask(frame)
+            # cv2.imshow("Edges", edges)
         else:
             edges = np.zeros((64, 128), dtype=np.uint8)  # default blank image if no image available
+        
+        # cv2.waitKey(0)  # press 0 to close windows
+        # cv2.destroyAllWindows()
         
         # Prevent NaN values in observations
         if any(np.isnan(position)) or np.isnan(speed):
@@ -274,6 +279,8 @@ class WebotsCarEnv(gym.Env):
         if not left_lane:
             return 80  # heavy penalty if no lane detected
         
+        # avg of x pos of lane points closest to the car
+        # x_right = max(right_lane, key=lambda pt: pt[1])[0]
         x_left = max(left_lane, key=lambda pt: pt[1])[0]
             
         if x_left == 0:
@@ -293,58 +300,96 @@ class WebotsCarEnv(gym.Env):
         raw_image = self.camera.getImage()
         
         img = np.frombuffer(raw_image, np.uint8).reshape((height, width, 4))
-        img_bgr = img[:, :, :3]  # remove alpha channel
+        img_bgr = img[:, :, :3]  # remove alpha channel and only have BGR channels
         return img_bgr
     
     
     def _create_lane_mask(self, frame):
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) # hue, saturation, value color filtering
+
+        # yellow line detection
         lower_bound_yellow = np.array([18, 94, 140], dtype=np.uint8)
         upper_bound_yellow = np.array([48, 255, 255], dtype=np.uint8)
         yellow_mask = cv2.inRange(hsv, lower_bound_yellow, upper_bound_yellow)
         
+        # white line detection
+        # lower_bound_white = np.array([0, 0, 150], dtype=np.uint8)
+        # upper_bound_white = np.array([180, 35, 255], dtype=np.uint8)
+        # white_mask = cv2.inRange(hsv, lower_bound_white, upper_bound_white)
+        
+        # combined_mask = cv2.bitwise_or(yellow_mask, white_mask)
+
+        # strengthen dashed lines
+        # kernel = np.ones((3, 3), np.uint8)
+        # combined_mask = cv2.dilate(combined_mask, kernel, iterations=2)
+        
         height, width = frame.shape[:2]
         mask_roi = np.zeros_like(yellow_mask)
+        
+        # focus on bottom half of the frame
         roi_vertices = np.array([[
             (0, height), (width, height), (width, height//2), (0, height//2)
         ]], dtype=np.int32)
+
         cv2.fillPoly(mask_roi, roi_vertices, 255)
-        combined_mask = cv2.bitwise_and(yellow_mask, mask_roi)
-        edges = cv2.Canny(combined_mask, 80, 150)
+        combined_mask = cv2.bitwise_and(yellow_mask, mask_roi)  # apply region mask
+
+        edges = cv2.Canny(combined_mask, 80, 150) 
         return edges
         
     
+    # https://ieeexplore.ieee.org/document/9208278
+    # https://www.youtube.com/watch?v=ApYo6tXcjjQ
     def _sliding_window_detect_lanes(self, edges):
         height, width = edges.shape
-        histogram = np.sum(edges[height//2:, :], axis=0)
-        midpoint = width // 2
-        left_x_base = np.argmax(histogram[:midpoint])
         
+        # only get histogram for lower half of image where the lanes are
+        histogram = np.sum(edges[height//2:, :], axis=0)
+        
+        midpoint = width // 2
+        left_x_base = np.argmax(histogram[:midpoint])  # yellow lane line
+        # right_x_base = np.argmax(histogram[midpoint:]) + midpoint # white dotted lane line
+        
+        # sliding window parameters
         num_windows = 10
         window_height = height // num_windows
         margin = 60
         min_pixels = 30
         
         left_x_current = left_x_base
+        # right_x_current = right_x_base
         left_lane_pts = []
+        # right_lane_pts = []
         
         for window in range(num_windows):
+            # sliding window boundaries
             y_low = height - (window + 1) * window_height
             y_high = height - window * window_height
 
             x_left_low = int(left_x_current - margin)
             x_left_high = int(left_x_current + margin)
+
+            # x_right_low = int(right_x_current - margin)
+            # x_right_high = int(right_x_current + margin)
             
-            # Ensure indices are within image bounds
-            window_slice = edges[y_low:y_high, max(x_left_low, 0):min(x_left_high, width)]
-            left_lane_indices = np.where(window_slice > 0)
+            # get lane pixels in each window
+            left_lane_indices = np.where((edges[y_low:y_high, x_left_low:x_left_high] > 0))
+            # right_lane_indices = np.where((edges[y_low:y_high, x_right_low:x_right_high] > 0))
             
+            # yellow solid line
             if len(left_lane_indices[0]) > min_pixels:
-                left_x_current = np.mean(left_lane_indices[1]) + max(x_left_low, 0)
+                left_x_current = np.mean(left_lane_indices[1]) + x_left_low
                 
-            left_lane_pts.append((left_x_current, (y_low + y_high) // 2))
+            # white dotted line: check for lane pixels, if currently in gap use the previous window
+            # if len(right_lane_indices[0]) > min_pixels:
+            #     right_x_current = np.mean(right_lane_indices[1]) + x_right_low
+            # elif len(right_lane_pts) > 0:
+            #     right_x_current = right_lane_pts[-1][0]
+                
+            left_lane_pts.append((left_x_current, (y_low + y_high) // 2)) # yellow lane line
+            # right_lane_pts.append((right_x_current, (y_low + y_high) // 2)) # white dotted lane line
             
-        return left_lane_pts
+        return left_lane_pts#, right_lane_pts
         
     
     def _process_lidar(self):
