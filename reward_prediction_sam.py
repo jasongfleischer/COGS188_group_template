@@ -37,6 +37,15 @@ class MahjongGame:
     def __init__(self, num_players=4, device='cpu', silent=False):
         self.num_players = num_players
         self.players = [[] for _ in range(num_players)]
+
+        # create state matrix: player, location, tile type
+        self.state_matrix = torch.zeros((self.num_players, 4, 37))
+        # location meanings:
+        # 0: unknown position
+        # 1: in hand, not locked in set
+        # 2: in hand, locked in set
+        # 3: not in hand, inaccessible
+
         self.wall = self._create_wall()
         self.discards = [[] for _ in range(num_players)]
         self.current_player = 0
@@ -46,20 +55,12 @@ class MahjongGame:
         self.agent = None
         self.last_discard = None
 
-        # create state matrix: player, tile type, location
-        self.state_matrix = torch.zeros((self.num_players, 37, 4), dtype=torch.long)
-        # location meanings:
-        # 0: unknown position
-        # 1: in hand, not locked in set
-        # 2: in hand, locked in set
-        # 3: not in hand, inaccessible
-
     def toggle_silence(self):
         self.silent = not self.silent
 
     def _create_wall(self):
         self.state_matrix *= 0 #remove all tiles
-        self.state_matrix[:, :, 0] += 4 #add 4 tiles to unknown
+        self.state_matrix[:, 0] += 4 #add 4 tiles to unknown
 
         suits = ["mans", "pins", "sticks"]
         tiles = [Tile(suit, value) for suit in suits for value in range(1, 10)] * 4 #includes flowers
@@ -85,44 +86,45 @@ class MahjongGame:
         if do_old:
             self.players[player].append(tile)
         if do_matrix:
-            self.state_matrix[player, tile.num, 0] -= 1 #remove from unknown
-            self.state_matrix[player, tile.num, 1] += 1 #add to hand
-            assert self.state_matrix[p, tile.num].sum() == 4
-            assert self.state_matrix[p, tile.num].min() >= 0
+            self.state_matrix[player, 0, tile.num] -= 1 #remove from unknown
+            self.state_matrix[player, 1, tile.num] += 1 #add to hand
+            assert self.state_matrix[player, :, tile.num].sum() == 4
+            assert self.state_matrix[player, :, tile.num].min() >= 0
         return tile
     
     def _pong(self, player, tile):
         self.players[player].append(tile)
         for p in range(self.num_players):
+            self.state_matrix[p, 3, tile.num] -= 1
             if p == player:
-                self.state_matrix[p, tile.num, 1] -= 2
-                self.state_matrix[p, tile.num, 2] += 3
-                assert self.state_matrix[p, tile.num].sum() == 4
-                assert self.state_matrix[p, tile.num].min() >= 0
+                self.state_matrix[p, 1, tile.num] -= 2
+                self.state_matrix[p, 2, tile.num] += 3
+                assert self.state_matrix[p, :, tile.num].sum() == 4
+                assert self.state_matrix[p, :, tile.num].min() >= 0
             else:
-                self.state_matrix[p, tile.num, 0] -= 3
-                self.state_matrix[p, tile.num, 3] += 3
-                assert self.state_matrix[p, tile.num].sum() == 4
-                assert self.state_matrix[p, tile.num].min() >= 0
+                self.state_matrix[p, 0, tile.num] -= 2
+                self.state_matrix[p, 3, tile.num] += 3
+                assert self.state_matrix[p, :, tile.num].sum() == 4
+                assert self.state_matrix[p, :, tile.num].min() >= 0
     
     def _chow(self, player, tile):
         self.players[player].append(tile)
         for p in range(self.num_players):
             if p == player:
-                self.state_matrix[p, tile.num-1, 1] -= 1
-                self.state_matrix[p, tile.num, 0] -= 1
-                self.state_matrix[p, tile.num+1] -= 1
+                self.state_matrix[p, 1, tile.num-1] -= 1
+                self.state_matrix[p, 0, tile.num] -= 1
+                self.state_matrix[p, 1, tile.num+1] -= 1
                 new = 2
             else:
-                self.state_matrix[p, tile.num-1:tile.num+2, 0] -= 1
+                self.state_matrix[p, 0, tile.num-1:tile.num+2] -= 1
                 new = 3
-            self.state_matrix[p, tile.num-1:tile.num+1, new] += 1
-            assert self.state_matrix[p, tile.num-1].sum() == 4
-            assert self.state_matrix[p, tile.num].sum() == 4
-            assert self.state_matrix[p, tile.num+1].sum() == 4
-            assert self.state_matrix[p, tile.num-1].min() >= 0
-            assert self.state_matrix[p, tile.num].min() >= 0
-            assert self.state_matrix[p, tile.num+1].min() >= 0
+            self.state_matrix[p, new, tile.num-1:tile.num+2] += 1
+            assert self.state_matrix[p, :, tile.num-1].sum() == 4
+            assert self.state_matrix[p, :, tile.num].sum() == 4
+            assert self.state_matrix[p, :, tile.num+1].sum() == 4
+            assert self.state_matrix[p, :, tile.num-1].min() >= 0
+            assert self.state_matrix[p, :, tile.num].min() >= 0
+            assert self.state_matrix[p, :, tile.num+1].min() >= 0
 
     def discard_tile(self, player, tile, do_matrix=False):
         # Player discards a tile
@@ -132,10 +134,12 @@ class MahjongGame:
         if do_matrix:
             for p in range(self.num_players):
                 if p == player:
-                    self.state_matrix[p, tile.num, 1] -= 1
+                    self.state_matrix[p, 1, tile.num] -= 1
                 else:
-                    self.state_matrix[p, tile.num, 0] -= 1
-                self.state_matrix
+                    self.state_matrix[p, 0, tile.num] -= 1
+                self.state_matrix[p, 3, tile.num] += 1
+                assert self.state_matrix[p, :, tile.num].sum() == 4
+                assert self.state_matrix[p, :, tile.num].min() >= 0
         self.players[player].remove(tile)
         self.discards[player].append(tile)
         
@@ -143,9 +147,10 @@ class MahjongGame:
         if do_old:
             self.players[player].remove(tile)
             self.discards[player].append(tile)
-        self.state_matrix[player, tile.num, 1] -= 1
-        self.state_matrix[player, tile.num, 0] += 1
-        return tile.num
+        self.state_matrix[player, 1, tile.num] -= 1
+        self.state_matrix[player, 0, tile.num] += 1
+        assert self.state_matrix[player, :, tile.num].sum() == 4
+        assert self.state_matrix[player, :, tile.num].min() >= 0
 
     def get_game_state(self):
         #current game state
@@ -172,7 +177,7 @@ class MahjongGame:
     def check_pong(self, tile):
         for n in range(self.num_players-1):
             player = (self.current_player + n) % self.num_players
-            if self.state_matrix[player, tile.num, 1] == 2:
+            if self.state_matrix[player, 1, tile.num] == 2:
                 if not self.silent:
                     print(f"Player {player} forms a Pong with {tile}")
                 return player
@@ -206,104 +211,7 @@ class MahjongGame:
         self.current_player += 1
         self.current_player %= self.num_players
         self.last_discard = discard
-#        for p in range(self.num_players):
- #           print(self.players[p])
-  #          print(self.discards[p])
-   #         for n in range(37):
-    #            print(torch.count_nonzero(self.matrices[p, :, n] == 1).item(),
-     #                 torch.count_nonzero(self.matrices[p, :, n] == 2).item(),
-      #                torch.count_nonzero(self.matrices[p, :, n] == 3).item(),
-       #               end='\n' if n%10 == 10 else '  ')
-        #    print('\n')
         return False, self.current_player
-
-    def play_turn(self, use_matrix=False):
-        tile = self.draw_tile(self.current_player)
-        if not self.silent:
-            print(f"Player {self.current_player} draws {tile}")
-        
-        if self.check_win(self.current_player):
-            return True
-        
-        state = self.get_game_state() 
-        if use_matrix:
-            best_tile_to_discard = self.decide_tile_to_discard(self.agent, self.current_player)
-        else:
-            best_tile_to_discard = decide_tile_to_discard(self.agent, state)
-
-        judge, best_tile_to_discard, player = self.can_pong_from_discard(self.current_player, state, best_tile_to_discard, epsilon=0.2)
-        while judge:
-            judge, best_tile_to_discard, player = self.can_pong_from_discard(player, self.get_game_state(), best_tile_to_discard, epsilon=0.2)
-        
-        self.discard_tile(player, best_tile_to_discard)
-        self.current_player = (player + 1) % self.num_players
-        return False, self.current_player  
-
-    def can_pong_from_discard(self, current_player, state, discarded_tile, epsilon=0.2, use_matrix=False):
-        """
-        Check if the player can form a Pong (3 identical tiles) using a discarded tile.
-        """
-        # Count how many of the discarded tile exist in the player's hand
-        for player in ((current_player + 1) % self.num_players, (current_player + 2) % num_players, (current_player + 3) % num_players):
-            if use_matrix:
-                count = torch.count_nonzero(self.matrices[player, :, discarded_tile.num] == 1)
-            else:
-                hand = state['hand'][player]
-                count = sum(1 for tile in hand if tile.suit == discarded_tile.suit and tile.value == discarded_tile.value)
-            # If the player has two of the discarded tile, they can form a Pong
-            if count == 2 and np.random.rand() > epsilon:
-                if use_matrix:
-                    self._add(player, discarded_tile)
-                else:
-                    state['hand'][player].append(discarded_tile)
-                if not self.silent:
-                    print(f"Player {player} forms a Pong with {discarded_tile}")
-
-                if self.check_win(player):
-                    if not self.silent:
-                        print(f"Player {player} wins!")
-                    return True
-                if use_matrix:
-                    best_tile_to_discard = self.decide_tile_to_discard(agent, player)
-                else:
-                    best_tile_to_discard = decide_tile_to_discard(agent, self.get_game_state())#true or false
-
-                return True, best_tile_to_discard, player
-        return False, discarded_tile, current_player
-    
-    def play_turn(self):
-        tile = self.draw_tile(self.current_player)
-        print(f"Player {self.current_player} draws {tile}")
-        state = self.get_game_state() 
-        if self.check_win(self.current_player):
-            return True 
-        best_tile_to_discard = decide_tile_to_discard(agent, self.get_game_state()) 
-        judge, best_tile_to_discard, player = self.can_pong_from_discard(self.current_player, state, best_tile_to_discard, num_players=4, epsilon=0.2)
-        while judge:
-            judge, best_tile_to_discard, player = self.can_pong_from_discard(player, self.get_game_state(), best_tile_to_discard, num_players=4, epsilon=0.2)
-        
-        self.discard_tile(player, best_tile_to_discard)
-        self.current_player = (player + 1) % self.num_players
-        return False, self.current_player  
-    
-    def can_pong_from_discard(self, current_player, state, discarded_tile, num_players = 4, epsilon=0.2):
-        """
-        Check if the player can form a Pong (3 identical tiles) using a discarded tile.
-        """
-        # Count how many of the discarded tile exist in the player's hand
-        for player in ((current_player + 1) % num_players, (current_player + 2) % num_players, (current_player + 3) % num_players):
-            hand = state['hand'][player]
-            count = sum(1 for tile in hand if tile.suit == discarded_tile.suit and tile.value == discarded_tile.value)
-            # If the player has two of the discarded tile, they can form a Pong
-            if count == 2 and np.random.rand() > epsilon:
-                state['hand'][player].append(discarded_tile)
-                print(f"Player {player} forms a Pong with {discarded_tile}")
-                if self.check_win(player):
-                    print(f"Player {player} wins!")
-                    return True
-                best_tile_to_discard = decide_tile_to_discard(agent, self.get_game_state())#true or false
-                return True, best_tile_to_discard, player
-        return False, discarded_tile, current_player
     
     def decide_tile_to_discard(self, p):
         best_tile = None
@@ -312,7 +220,7 @@ class MahjongGame:
         with torch.no_grad():
             for tile in self.players[p]:
                 self._discard(p, tile)
-                predicted_value = self.agent.predict_reward(self.matrices[p:p+1]).item()
+                predicted_value = self.agent.predict_reward(self.state_matrix[p:p+1]).item()
                 if predicted_value > best_value:
                     best_tile = tile
                 self._add(p, tile, do_old=False)
@@ -321,65 +229,6 @@ class MahjongGame:
             print(f"Error: {best_tile} not found in player's hand!")
             return None
         return best_tile
-
-
-def is_straight(tiles):
-    """
-    Check if the given tiles form a valid straight (chow).
-    Tiles must be of the same suit and consecutive in value.
-    """
-    if len(tiles) != 3:
-        return False
-    suits = {tile.suit for tile in tiles}
-    if len(suits) != 1:  # All tiles must be of the same suit
-        return False
-    if any(tile.suit == "honors" for tile in tiles):
-        return False
-    values = sorted([tile.value for tile in tiles])
-    return values[0] + 1 == values[1] and values[1] + 1 == values[2]
-
-
-def is_pon(tiles):
-    """
-    Check if the given tiles form a valid pung (3 identical tiles).
-    """
-    if len(tiles) != 3:
-        return False
-    return all(tile == tiles[0] for tile in tiles)
-
-
-def is_pair(tiles):
-    """
-    Check if the given tiles form a valid pair (2 identical tiles).
-    """
-    if len(tiles) != 2:
-        return False
-    return tiles[0] == tiles[1]
-
-
-def find_melds(hand):
-    """
-    Find all possible melds (straights or pungs) in the hand.
-    """
-    melds = []
-    hand = sorted(hand, key=lambda x: (x.suit, x.value))  # Sort hand for easier processing
-
-    # Check for pungs
-    counts = defaultdict(int)
-    for tile in hand:
-        counts[(tile.suit, tile.value)] += 1
-    for key, count in counts.items():
-        if count >= 3:
-            melds.append([tile for tile in hand if tile.suit == key[0] and tile.value == key[1]][:3])
-
-    # Check for straights
-    for i in range(len(hand) - 2):
-        group = hand[i:i+3]
-        if is_straight(group):
-            melds.append(group)
-
-    return melds
-
 
 def is_winning_hand(hand):
     """
@@ -408,167 +257,75 @@ def is_winning_hand(hand):
     return False
 
 
-def can_form_meld(hand):
-    #Check straights
-    if len(hand) == 0:
-        return True
-    for tile in hand:
-        suit = tile.suit
-        value = tile.value
-        next_value = value + 1
-        next_next_value = value + 2
-        if 1 <= value <= 7:
-            if Tile(suit, next_value) in hand and Tile(suit, next_next_value) in hand:
-                hand.remove(Tile(suit, value))
-                hand.remove(Tile(suit, next_value))
-                hand.remove(Tile(suit, next_next_value))
-                if can_form_meld(hand):
-                    return True
-                hand.append(Tile(suit, value))  # Backtrack
-                hand.append(Tile(suit, next_value))
-                hand.append(Tile(suit, next_next_value))
-        if hand.count(Tile(suit, value)) >= 3:
-            hand.remove(Tile(suit, value))
-            hand.remove(Tile(suit, value))
-            hand.remove(Tile(suit, value))
-            if can_form_meld(hand):
-                return True
-            hand.append(Tile(suit, value))  # Backtrack
-            hand.append(Tile(suit, value))
-            hand.append(Tile(suit, value))
-    return False
-
-
-'''
-def is_winning_hand(hand):
+def is_pon(tiles):
     """
-    Check if the hand is a winning hand (4 melds and 1 pair).
+    Check if the given tiles form a valid pung (3 identical tiles).
     """
-    if len(hand) != 14:  # A complete hand has 14 tiles
+    if len(tiles) != 3:
         return False
+    return all(tile == tiles[0] for tile in tiles)
 
-    # Find all possible pairs
+
+def find_melds(hand):
+    """
+    Find all possible melds (straights or pungs) in the hand.
+    """
+    melds = []
+    hand = sorted(hand, key=lambda x: (x.suit, x.value))  # Sort hand for easier processing
+
+    # Check for pungs
     counts = defaultdict(int)
     for tile in hand:
         counts[(tile.suit, tile.value)] += 1
-    pairs = [key for key, count in counts.items() if count >= 2]
+    for key, count in counts.items():
+        if count >= 3:
+            melds.append([tile for tile in hand if tile.suit == key[0] and tile.value == key[1]][:3])
 
-    # Try each pair and see if the remaining tiles can form 4 melds
-    for pair_key in pairs:
-        remaining_hand = hand.copy()
-        # Remove the pair from the hand
-        pair_tiles = [tile for tile in remaining_hand if tile.suit == pair_key[0] and tile.value == pair_key[1]][:2]
-        for tile in pair_tiles:
-            remaining_hand.remove(tile)
+    # Check for straights
+    for i in range(len(hand) - 2):
+        group = hand[i:i+3]
+        if is_straight(group):
+            melds.append(group)
 
-        # Find melds in the remaining hand
-        melds = find_melds(remaining_hand)
-        if len(melds) >= 4:
-            return True
-
-    return False
-'''
-'''
-def is_reach_possible(hand):
-    """
-    Check if the hand is in a state where a player can declare a reach.
-    (i.e., the hand is 13 tiles and 1 tile away from being a winning hand)
-    """
-    if len(hand) != 14: 
-        return False
-    counts = defaultdict(int)
-    for tile in hand:
-        counts[(tile.suit, tile.value)] += 1
-    pairs = [key for key, count in counts.items() if count >= 2]
-    for pair_key in pairs:
-        remaining_hand = hand.copy()
-        pair_tiles = [tile for tile in remaining_hand if tile.suit == pair_key[0] and tile.value == pair_key[1]][:2]
-        for tile in pair_tiles:
-            remaining_hand.remove(tile)
-        melds = find_melds(remaining_hand)
-        if len(melds) == 4:
-            return True
-
-    return False
-# Example usage
-'''
+    return melds
 
 
 class GlobalRewardPredictor(nn.Module):
-    def __init__(self, input_size):
+    def __init__(self, input_size, net_type='lin'):
         super(GlobalRewardPredictor, self).__init__()
-        self.fc1 = nn.Linear(input_size, 128)
-        self.fc2 = nn.Linear(128, 64)
-        self.fc3 = nn.Linear(64, 1)
-        self.relu = nn.ReLU()
+        if net_type == 'lin':
+            self.model = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(input_size, 128),
+                nn.ReLU(),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.Linear(64, 1),
+            )
+        else:
+            self.model = nn.Sequential(
+                nn.Conv1d(4, 8, 4), # applies learned kernel function to locations for each tile type
+                nn.ReLU(),
+                nn.Flatten(),
+                nn.Linear(8*input_size, 128),
+                nn.ReLU(),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.Linear(64, 1),
+                nn.Softmax()
+            )
+
         self.flatten = nn.Flatten()
 
     def forward(self, state):
-        if state.shape[-1] == 3:
-            x = state
-        else:
-            x = self.flatten(state)
-
-        x = self.relu(self.fc1(x))
-        x = self.relu(self.fc2(x))
-        x = self.fc3(x)
+        x = self.model(state)
         return x
 
 
-def pair_count(hand):
-    pair_count = 0
-    counts = defaultdict(int)
-    for tile in hand:
-        counts[(tile.suit, tile.value)] += 1
-    for count in counts.values():
-        if count >= 2:
-            pair_count += 1
-    return pair_count
-
-
-def discard_count(state, drawn_tile):
-    discard_count = 0
-    for player_discard in state["discards"]:
-        for tile in player_discard:
-            if tile.value == drawn_tile.value and tile.suit == drawn_tile.suit:
-                discard_count += 1  
-    return discard_count
-
-
-
-def look_ahead_features(state, player, drawn_tile):#deciding which tile to discard
-    features = []
-    features.append(len(find_melds(state['hand'][player])))#adding current player's melds' number to features
-    features.append(pair_count(state['hand'][player]))##adding current player's pair's number to features
-    features.append(discard_count(state, drawn_tile))#adding number of discarded tiles same as drawn_tile to features
-
-    return torch.tensor(features)
-
-
-def decide_tile_to_discard(agent, state):
-    hand = state["hand"][state["current_player"]]#current player hand
-    best_tile = None
-    best_value = -float("inf")
-
-    for tile in hand:
-        state_features = look_ahead_features(state, state["current_player"], drawn_tile=tile)
-        predicted_value = agent.predict_reward(state_features).item()
-        
-        if predicted_value > best_value:
-            best_value = predicted_value
-            best_tile = tile
-    
-    if best_tile not in hand:
-        print(f"Error: {best_tile} not found in player's hand!")
-        return None
-    return best_tile
-
-
-
 class GlobalRewardAgent:
-    def __init__(self, input_size, learning_rate=0.001, device='cpu'):
+    def __init__(self, input_size, learning_rate=0.001, net_type='lin', device='cpu'):
         self.device = device
-        self.model = GlobalRewardPredictor(input_size).to(self.device)
+        self.model = GlobalRewardPredictor(input_size, net_type).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
         self.criterion = nn.MSELoss()
 
@@ -633,31 +390,6 @@ class GlobalRewardAgent:
         
         # If the tile is not part of any meld, it might be important
         return True
-
-
-agent = GlobalRewardAgent(input_size=3)
-'''
-def can_pong_from_discard(current_player, state, discarded_tile, num_players = 4):
-    """
-    Check if the player can form a Pong (3 identical tiles) using a discarded tile.
-    """
-    # Count how many of the discarded tile exist in the player's hand
-    for player in ((current_player + 1) % num_players, (current_player + 2) % num_players, (current_player + 3) % num_players):
-        hand = state['hand'][player]
-        count = sum(1 for tile in hand if tile.suit == discarded_tile.suit and tile.value == discarded_tile.value)
-         # If the player has two of the discarded tile, they can form a Pong
-        if count == 2:
-            state['hand'][player].append(discarded_tile)
-            print(f"Player {player} forms a Pong with {discarded_tile}")
-            if MahjongGame.check_win(player):
-                print(f"Player {player} wins!")
-                return True
-            best_tile_to_discard = decide_tile_to_discard(agent, MahjongGame.get_game_state())#true or false
-            return True, best_tile_to_discard, player
-    return False, discarded_tile, current_player
-'''    
-    
-    
    
 
 def can_chow_from_discard(hand, discarded_tile):
@@ -684,43 +416,3 @@ def can_chow_from_discard(hand, discarded_tile):
                 if values[i] + 1 == values[i + 1] and values[i + 1] + 1 == values[i + 2]:
                     return True  # Found a valid Chow
     return False
-
-
-    
-def extract_features(state, player, discarded_tile):
-
-    features = []
-    features.append(state["current_player"])
-  
-    current_player_hand = state["hand"][state["current_player"]]
-    melds = find_melds(current_player_hand)
-    features.append(len(melds)) 
-    
-    can_pong = False
-    if can_pong:
-        features.append(can_pong)  #whether we can pong
-        
-    can_chow = False
-    if can_chow:
-            features.append(can_chow)
-      #whether we can chow  
-    return torch.FloatTensor(features)
-
-def decide_action(agent, state, discarded_tile):
-    state_features = extract_features(state, discarded_tile)
-    action_values = agent.predict_action(state_features).detach().numpy()  #predicted action value
-
-    action = np.argmax(action_values)
-    return action#pong or chow
-
-
-game = MahjongGame()
-game.deal_tiles()
-while True:
-    game_over = game.play_turn()  # ゲームのターンを実行し、終了かどうかを判定
-    state = game.get_game_state()  # ゲームの状態を取得
-    print(state)  # 現在のゲームの状態を出力
-
-    if game_over == True:  # ゲームが終了した場合
-        print("ゲームが終了しました!")
-        break  # ループを終了
