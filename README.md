@@ -1,6 +1,14 @@
-# COGS188 Project template
-Fork this repo.
+# COGS 188 Final Project
 
-Once you do it is is your repo. You are free to manage the repo as you see fit, edit this README, add data files, add scripts, etc. 
+## University Course Timetabling with Search and Evolutionary Optimization
 
-Also, you are free and encouraged to share this project after the course and to add it to your portfolio. Just be sure to fork it to your GitHub at the end of the quarter!
+**Team:** Derrick Chen, Zhen Wang, and Daira Merino
+
+We propose to compare a greedy baseline, simulated annealing, and a genetic algorithm for scheduling university courses under resource and availability constraints.
+
+- [Project proposal](Proposal_Project_Chen_Wang_Merino.ipynb)
+- [Final report template](FinalProject_YourGroupNameHere.ipynb)
+
+The proposal describes planned work and is subject to instructor feedback. Implementation and experimental results will be added as the project progresses. The unused special-topics proposal template has been removed because this group is pursuing an implementation project.
+
+Repository: https://github.com/zhc066/COGS188_group
